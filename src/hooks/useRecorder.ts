@@ -162,25 +162,43 @@ export const useRecorder = () => {
     }, []);
 
     const stopRecording = useCallback(async () => {
-        if (requestRef.current) cancelAnimationFrame(requestRef.current);
-        setIsRecording(false);
+        try {
+            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+            setIsRecording(false);
 
-        if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
-            await videoEncoderRef.current.flush();
-            videoEncoderRef.current.close();
-        }
+            // Bring focus back to this window
+            window.focus();
 
-        if (stream) {
-            stream.getTracks().forEach(t => t.stop());
-            setStream(null);
-        }
+            if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
+                try {
+                    await videoEncoderRef.current.flush();
+                } catch (e) {
+                    console.error("Encoder flush warning:", e);
+                }
+                videoEncoderRef.current.close();
+            }
 
-        if (muxerRef.current) {
-            const bytes = muxerRef.current.finish();
-            const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
-            const url = URL.createObjectURL(blob);
-            setPreviewBlobUrl(url);
-            muxerRef.current = null; // Reset muxer
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                setStream(null);
+            }
+
+            if (muxerRef.current) {
+                try {
+                    const bytes = muxerRef.current.finish();
+                    const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
+                    const url = URL.createObjectURL(blob);
+                    console.log("Setting preview URL:", url);
+                    setPreviewBlobUrl(url);
+                } catch (e) {
+                    console.error("Muxer finish failed:", e);
+                    // Force state update to show error UI if we had one, or just stop
+                }
+                muxerRef.current = null;
+            }
+        } catch (err) {
+            console.error("Critical error in stopRecording:", err);
+            setIsRecording(false);
         }
     }, [stream]);
 
