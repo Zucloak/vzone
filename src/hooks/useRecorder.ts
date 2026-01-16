@@ -179,9 +179,10 @@ export const useRecorder = () => {
                     0, 0, 1920, 1080 // Destination (Full frame)
                 );
 
-                // Create VideoFrame with proper timestamp (microseconds)
-                // Use frame count * frame duration for consistent 60fps timing
-                const timestamp = frameCountRef.current * (1000000 / 60);
+                // Use REAL ELAPSED TIME - this fixes the speed issue
+                if (startTimeRef.current === 0) startTimeRef.current = performance.now();
+                const elapsedMs = performance.now() - startTimeRef.current;
+                const timestamp = elapsedMs * 1000; // Convert to microseconds
                 const frame = new VideoFrame(canvasRef.current, { timestamp });
                 encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
                 frame.close();
