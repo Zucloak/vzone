@@ -164,4 +164,3 @@ export const RecorderUI: React.FC = () => {
         </div>
     );
 };
-```

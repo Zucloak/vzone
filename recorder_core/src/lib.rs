@@ -17,6 +17,11 @@ pub struct Rect {
 }
 
 #[wasm_bindgen]
+pub fn init_hooks() {
+    console_error_panic_hook::set_once();
+}
+
+#[wasm_bindgen]
 pub struct CameraRig {
     x: f64,
     y: f64,
@@ -138,16 +143,19 @@ struct InnerMuxer {
 impl Mp4Muxer {
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32) -> Mp4Muxer {
+        web_sys::console::log_1(&"Mp4Muxer::new called".into());
         let buffer = Vec::new();
         let cursor = Cursor::new(buffer);
+        
+        web_sys::console::log_1(&"Creating Mp4Writer...".into());
         let mut writer = mp4::Mp4Writer::write_start(cursor, &mp4::Mp4Config {
             major_brand: str::parse("mp41").unwrap(),
             minor_version: 512,
             compatible_brands: vec![str::parse("mp41").unwrap()],
             timescale: 1000,
-        }).unwrap();
+        }).expect("Failed to write start");
         
-        // Add track immediately
+        web_sys::console::log_1(&"Adding track...".into());
         writer.add_track(&mp4::TrackConfig {
             track_type: mp4::TrackType::Video,
             timescale: 1000,
@@ -155,13 +163,12 @@ impl Mp4Muxer {
             media_conf: mp4::MediaConfig::AvcConfig(mp4::AvcConfig {
                 width: width as u16,
                 height: height as u16,
-                // Minimal dummy config to satisfy the type. 
-                // In a real world, we need to extract SPS/PPS from WebCodecs description.
-                seq_param_set: vec![], 
-                pic_param_set: vec![],
+                seq_param_set: vec![0, 0, 0, 1], // Minimal dummy SPS to avoid panic if crate checks?
+                pic_param_set: vec![0, 0, 0, 1],
             }),
-            // handler_type is inferred from track_type in newer mp4 crate versions
-        }).unwrap();
+        }).expect("Failed to add track");
+
+        web_sys::console::log_1(&"Mp4Muxer initialized".into());
 
         let inner = Box::new(InnerMuxer {
             writer,
