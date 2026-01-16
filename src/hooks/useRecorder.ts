@@ -126,9 +126,24 @@ export const useRecorder = () => {
             video.play();
 
             const draw = () => {
-                if (!canvasRef.current || !rigRef.current) return;
+                if (frameCountRef.current % 60 === 0) {
+                    console.log(`🎨 draw() called for frame ${frameCountRef.current}`);
+                }
+
+                if (!canvasRef.current) {
+                    console.error("❌ canvasRef.current is null!");
+                    return;
+                }
+                if (!rigRef.current) {
+                    console.error("❌ rigRef.current is null!");
+                    return;
+                }
+
                 const ctx = canvasRef.current.getContext('2d');
-                if (!ctx) return;
+                if (!ctx) {
+                    console.error("❌ canvas context is null!");
+                    return;
+                }
 
                 // Auto-Center Logic: If mouse idle > 2s, zoom out to full screen
                 let targetX = cursorRef.current.x;
