@@ -1,3 +1,4 @@
+import type { BackgroundConfig } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
 
@@ -5,12 +6,17 @@ export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isReady, setIsReady] = useState(false);
     const [stream, setStream] = useState<MediaStream | null>(null);
+    const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
     const muxerRef = useRef<Mp4Muxer | null>(null);
     const rigRef = useRef<CameraRig | null>(null);
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
+
+    // Background State (Ref for render loop access)
+    const backgroundRef = useRef<BackgroundConfig>({ type: 'solid', color: '#171717' });
 
     // Mouse tracking state
     const cursorRef = useRef({ x: 0, y: 0 });
@@ -22,16 +28,15 @@ export const useRecorder = () => {
             setIsReady(true);
         });
 
-        // Listen to mouse globally (simulating tracking)
-        // Note: This only tracks mouse over the App window, not system-wide.
-        // For real screen recording, this is a limitation unless we capture the cursor in the video 
-        // and using CV (too complex for MVP).
-        // We will assume "App Recording" or user moves mouse in the tab.
         const handleMouseMove = (e: MouseEvent) => {
             cursorRef.current = { x: e.clientX, y: e.clientY };
         };
         window.addEventListener('mousemove', handleMouseMove);
         return () => window.removeEventListener('mousemove', handleMouseMove);
+    }, []);
+
+    const setBackground = useCallback((config: BackgroundConfig) => {
+        backgroundRef.current = config;
     }, []);
 
     const startRecording = useCallback(async () => {
@@ -42,10 +47,15 @@ export const useRecorder = () => {
                     height: { ideal: 1080 },
                     frameRate: 60,
                 },
-                audio: false
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    sampleRate: 44100
+                }
             });
 
             setStream(displayMedia);
+            setPreviewBlobUrl(null);
 
             const track = displayMedia.getVideoTracks()[0];
             const settings = track.getSettings();
@@ -84,9 +94,9 @@ export const useRecorder = () => {
             videoEncoderRef.current = encoder;
 
             // Setup Render Loop
-            // We need a Video element to play the stream so we can draw it to canvas
             const video = document.createElement('video');
             video.srcObject = displayMedia;
+            video.muted = true; // Important for autoplay
             video.play();
 
             const draw = () => {
@@ -95,40 +105,28 @@ export const useRecorder = () => {
                 if (!ctx) return;
 
                 // Update Physics
-                // We map client coordinates to video coordinates roughly? 
-                // Since we don't know the exact mapping if capturing full screen, 
-                // we'll assume the interaction is Center for now or just standard physics test.
-                // Or better: Let user drag a "Focus" element on screen.
-                // For MVP: Target is Cursor.
-
                 rigRef.current.update(cursorRef.current.x, cursorRef.current.y, 1 / 60);
-
                 const view = rigRef.current.get_view_rect();
 
-                // Draw Gradient BG
-                // We create a "Canvas" for the output frame
-                // Note: The PREVIEW canvas might be small, but we need to encode 1080p.
-                // Creating a dedicated OffscreenCanvas for encoding is better.
-
-                // Let's use the visible canvas for now (sized 1080p in memory?)
+                // Config Canvas
                 canvasRef.current.width = 1920;
                 canvasRef.current.height = 1080;
 
-                // 1. Fill Gradient Background
-                const gradient = ctx.createLinearGradient(0, 0, 1920, 1080);
-                gradient.addColorStop(0, '#ff9a9e');
-                gradient.addColorStop(1, '#fecfef');
-                ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, 1920, 1080);
+                // 1. Fill Background
+                const bg = backgroundRef.current;
+                if (bg.type === 'solid') {
+                    ctx.fillStyle = bg.color;
+                    ctx.fillRect(0, 0, 1920, 1080);
+                } else if (bg.type === 'gradient' && bg.startColor && bg.endColor) {
+                    const gradient = ctx.createLinearGradient(0, 0, 1920, 1080); // Diagonal-ish or horizontal?
+                    // vzoneui uses 'to right' which is 0,0 -> 1920,0
+                    gradient.addColorStop(0, bg.startColor);
+                    gradient.addColorStop(1, bg.endColor);
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, 1920, 1080);
+                }
 
                 // 2. Draw Video Frame (Cropped & Centered)
-                // We want to draw the 'view' rect from source video into the center of our 1920x1080 canvas
-                // simulating a "camera" looking at that part.
-                // Wait, if we crop, we zoom in.
-
-                // Dest Rect: Full canvas?
-                // Source Rect: view (x,y,w,h)
-
                 ctx.drawImage(
                     video,
                     view.x, view.y, view.width, view.height, // Source crop
@@ -144,7 +142,6 @@ export const useRecorder = () => {
                 requestRef.current = requestAnimationFrame(draw);
             };
 
-            // Start loop
             video.onloadedmetadata = () => {
                 requestRef.current = requestAnimationFrame(draw);
             };
@@ -152,10 +149,13 @@ export const useRecorder = () => {
             setIsRecording(true);
 
             // Stop handler
-            track.onended = stopRecording;
+            track.onended = () => {
+                stopRecording();
+            };
 
         } catch (err) {
             console.error("Error starting recording:", err);
+            setIsRecording(false);
         }
     }, []);
 
@@ -163,7 +163,7 @@ export const useRecorder = () => {
         if (requestRef.current) cancelAnimationFrame(requestRef.current);
         setIsRecording(false);
 
-        if (videoEncoderRef.current) {
+        if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
             await videoEncoderRef.current.flush();
             videoEncoderRef.current.close();
         }
@@ -177,10 +177,8 @@ export const useRecorder = () => {
             const bytes = muxerRef.current.finish();
             const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `recording-${Date.now()}.mp4`;
-            a.click();
+            setPreviewBlobUrl(url);
+            muxerRef.current = null; // Reset muxer
         }
     }, [stream]);
 
@@ -189,6 +187,9 @@ export const useRecorder = () => {
         isReady,
         startRecording,
         stopRecording,
-        canvasRef
+        canvasRef,
+        previewBlobUrl,
+        setBackground,
+        backgroundConfig: backgroundRef.current
     };
 };
