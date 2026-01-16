@@ -68,12 +68,21 @@ export const useRecorder = () => {
             // Initialize Camera Rig
             rigRef.current = new CameraRig(width, height);
 
-            // Initialize Muxer
-            muxerRef.current = new Mp4Muxer(1920, 1080); // Output size 1080p
-
             // Initialize VideoEncoder
             const encoder = new VideoEncoder({
-                output: (chunk, _metadata) => {
+                output: (chunk, metadata) => {
+                    // Lazy init Muxer once we have the codec config (SPS/PPS)
+                    if (!muxerRef.current && metadata?.decoderConfig?.description) {
+                        const description = new Uint8Array(metadata.decoderConfig.description as ArrayBuffer);
+                        console.log("Initializing Muxer with AVCC config, length:", description.length);
+                        try {
+                            muxerRef.current = new Mp4Muxer(1920, 1080, description);
+                        } catch (e) {
+                            console.error("Failed to create Muxer:", e);
+                            return;
+                        }
+                    }
+
                     if (muxerRef.current) {
                         const buffer = new Uint8Array(chunk.byteLength);
                         chunk.copyTo(buffer);
