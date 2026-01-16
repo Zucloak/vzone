@@ -179,10 +179,22 @@ export const useRecorder = () => {
                     0, 0, 1920, 1080 // Destination (Full frame)
                 );
 
-                // Use REAL ELAPSED TIME - this fixes the speed issue
-                if (startTimeRef.current === 0) startTimeRef.current = performance.now();
+                // Use REAL ELAPSED TIME
+                if (startTimeRef.current === 0) {
+                    startTimeRef.current = performance.now();
+                    console.log("🎬 Recording started at:", startTimeRef.current);
+                }
                 const elapsedMs = performance.now() - startTimeRef.current;
-                const timestamp = elapsedMs * 1000; // Convert to microseconds
+                const timestamp = elapsedMs * 1000; // microseconds
+
+                // Diagnostic logging
+                if (frameCountRef.current === 0) {
+                    console.log("📹 Frame 0 timestamp:", timestamp, "μs");
+                } else if (frameCountRef.current % 60 === 0) {
+                    const expected = (frameCountRef.current / 60 * 1000);
+                    console.log(`Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms for 60fps`);
+                }
+
                 const frame = new VideoFrame(canvasRef.current, { timestamp });
                 encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
                 frame.close();
