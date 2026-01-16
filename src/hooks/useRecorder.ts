@@ -214,9 +214,12 @@ export const useRecorder = () => {
                     setPreviewBlobUrl(url);
                 } catch (e) {
                     console.error("Muxer finish failed:", e);
-                    // Force state update to show error UI if we had one, or just stop
+                    alert("Muxer Error on Finish: " + e);
                 }
                 muxerRef.current = null;
+            } else {
+                console.warn("Muxer was null in stopRecording! No video data.");
+                alert("No video data was recorded. (Muxer not initialized - did recording start?)");
             }
         } catch (err) {
             console.error("Critical error in stopRecording:", err);
