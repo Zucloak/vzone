@@ -221,11 +221,17 @@ export const useRecorder = () => {
 
             video.onloadedmetadata = () => {
                 console.log("📺 Video loaded, starting setInterval...");
+                let callbackCount = 0;
                 const intervalId = window.setInterval(() => {
+                    callbackCount++;
+                    if (callbackCount % 60 === 0) {
+                        console.log(`🔄 Interval callback #${callbackCount} fired`);
+                    }
                     try {
                         draw();
                     } catch (e) {
                         console.error("❌ draw() error:", e);
+                        clearInterval(intervalId);
                     }
                 }, 16);
                 requestRef.current = intervalId;
