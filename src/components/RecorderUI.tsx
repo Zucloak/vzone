@@ -37,7 +37,16 @@ export const RecorderUI: React.FC = () => {
 
         const handleMessage = (e: MessageEvent) => {
             if (e.data?.type === 'STOP_RECORDING') {
-                window.focus(); // Bring main window to front
+                // Multi-pronged approach to grab focus
+                window.focus();
+                setTimeout(() => window.focus(), 50);
+                setTimeout(() => window.focus(), 200);
+
+                // Force a document title change to grab attention
+                const originalTitle = document.title;
+                document.title = '🎬 Recording Stopped!';
+                setTimeout(() => { document.title = originalTitle; }, 2000);
+
                 stopRecording();
             }
         };
