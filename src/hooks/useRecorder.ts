@@ -129,8 +129,18 @@ export const useRecorder = () => {
                 const ctx = canvasRef.current.getContext('2d');
                 if (!ctx) return;
 
+                // Auto-Center Logic: If mouse idle > 2s, zoom out to full screen
+                let targetX = cursorRef.current.x;
+                let targetY = cursorRef.current.y;
+
+                if (Date.now() - lastMouseMoveRef.current > 2000) {
+                    // No mouse activity - show full screen (centered)
+                    targetX = 1920 / 2;
+                    targetY = 1080 / 2;
+                }
+
                 // Update Physics
-                rigRef.current.update(cursorRef.current.x, cursorRef.current.y, 1 / 60);
+                rigRef.current.update(targetX, targetY, 1 / 60);
                 const view = rigRef.current.get_view_rect();
 
                 // Config Canvas
