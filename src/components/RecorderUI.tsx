@@ -19,6 +19,30 @@ export const RecorderUI: React.FC = () => {
     // Local state for UI feedback (timers, etc.) that mirrors the hook
     const [timer, setTimer] = useState(0);
     const timerInterval = React.useRef<number | null>(null);
+    const popupRef = React.useRef<Window | null>(null);
+
+    useEffect(() => {
+        if (isRecording) {
+            // Open Popup Toolbar
+            popupRef.current = window.open(
+                '/#controls',
+                'MotionToolbar',
+                'width=350,height=80,top=100,left=100,resizable=no,alwaysOnTop=yes'
+            );
+        } else {
+            // Close Popup
+            popupRef.current?.close();
+            popupRef.current = null;
+        }
+
+        const handleMessage = (e: MessageEvent) => {
+            if (e.data?.type === 'STOP_RECORDING') {
+                stopRecording();
+            }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [isRecording, stopRecording]);
 
     // Sync background config from hook to local UI usage if needed
     // Actually we just pass setBackground to the picker.
