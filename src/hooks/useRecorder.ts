@@ -20,7 +20,9 @@ export const useRecorder = () => {
     const backgroundRef = useRef<BackgroundConfig>({ type: 'solid', color: '#171717' });
 
     // Mouse tracking state
-    const cursorRef = useRef({ x: 0, y: 0 });
+    const cursorRef = useRef({ x: 960, y: 540 }); // Start center
+    const lastMouseMoveRef = useRef<number>(Date.now());
+    const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
         // Init Wasm
@@ -31,9 +33,17 @@ export const useRecorder = () => {
 
         const handleMouseMove = (e: MouseEvent) => {
             cursorRef.current = { x: e.clientX, y: e.clientY };
+            lastMouseMoveRef.current = Date.now();
         };
         window.addEventListener('mousemove', handleMouseMove);
-        return () => window.removeEventListener('mousemove', handleMouseMove);
+
+        // Init Worker
+        workerRef.current = new Worker(new URL('../workers/timer.worker.ts', import.meta.url), { type: 'module' });
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            workerRef.current?.terminate();
+        };
     }, []);
 
     const setBackground = useCallback((config: BackgroundConfig) => {
