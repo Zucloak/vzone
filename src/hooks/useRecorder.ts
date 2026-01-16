@@ -14,6 +14,7 @@ export const useRecorder = () => {
     const rigRef = useRef<CameraRig | null>(null);
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
+    const startTimeRef = useRef<number>(0);
 
     // Background State
     const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>({ type: 'solid', color: '#171717' });
