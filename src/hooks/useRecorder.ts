@@ -133,15 +133,25 @@ export const useRecorder = () => {
                 let targetX = cursorRef.current.x;
                 let targetY = cursorRef.current.y;
 
-                if (Date.now() - lastMouseMoveRef.current > 2000) {
+                const timeSinceMove = Date.now() - lastMouseMoveRef.current;
+                if (timeSinceMove > 2000) {
                     // No mouse activity - show full screen (centered)
                     targetX = 1920 / 2;
                     targetY = 1080 / 2;
+
+                    if (frameCountRef.current % 120 === 0) {
+                        console.log("🎯 Auto-Center ACTIVE - Time since last mouse:", timeSinceMove + "ms");
+                        console.log("   Target:", targetX, targetY);
+                    }
                 }
 
                 // Update Physics
                 rigRef.current.update(targetX, targetY, 1 / 60);
                 const view = rigRef.current.get_view_rect();
+
+                if (frameCountRef.current % 120 === 0) {
+                    console.log("📹 View:", view);
+                }
 
                 // Config Canvas
                 canvasRef.current.width = 1920;
@@ -168,8 +178,10 @@ export const useRecorder = () => {
                     0, 0, 1920, 1080 // Destination (Full frame)
                 );
 
-                // Create VideoFrame for Encoder
-                const frame = new VideoFrame(canvasRef.current, { timestamp: performance.now() * 1000 });
+                // Create VideoFrame with proper timestamp (microseconds)
+                // Use frame count * frame duration for consistent 60fps timing
+                const timestamp = frameCountRef.current * (1000000 / 60);
+                const frame = new VideoFrame(canvasRef.current, { timestamp });
                 encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
                 frame.close();
 
