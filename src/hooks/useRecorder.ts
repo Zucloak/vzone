@@ -198,13 +198,23 @@ export const useRecorder = () => {
                 frame.close();
 
                 frameCountRef.current++;
-                // setInterval drives the loop, no recursion needed
+                // Log every 30 frames to confirm loop is running  
+                if (frameCountRef.current % 30 === 0) {
+                    console.log(`✅ Loop alive - frame ${frameCountRef.current}`);
+                }
             };
 
             video.onloadedmetadata = () => {
-                console.log("Video loaded. Starting recording with setInterval.");
-                // Use setInterval instead of rAF - runs even when tab is hidden
-                requestRef.current = window.setInterval(() => draw(), 16); // ~60fps
+                console.log("📺 Video loaded, starting setInterval...");
+                const intervalId = window.setInterval(() => {
+                    try {
+                        draw();
+                    } catch (e) {
+                        console.error("❌ draw() error:", e);
+                    }
+                }, 16);
+                requestRef.current = intervalId;
+                console.log("⏰ Interval ID:", intervalId);
             };
 
             setIsRecording(true);
