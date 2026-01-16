@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useRecorder } from '../hooks/useRecorder';
-import { MonitorPlay, RotateCcw, Download } from 'lucide-react';
+import { MonitorPlay, RotateCcw, Download, Zap } from 'lucide-react';
 import { DraggableControls } from './DraggableControls';
 import { BackgroundPicker } from './BackgroundPicker';
 
@@ -41,6 +41,11 @@ export const RecorderUI: React.FC = () => {
         window.location.reload(); // Simple reset for now to clear blobs/streams
     };
 
+    const getBackgroundStyle = () => {
+        if (backgroundConfig.type === 'solid') return { backgroundColor: backgroundConfig.color };
+        return { background: `linear-gradient(${backgroundConfig.direction || 'to right'}, ${backgroundConfig.startColor}, ${backgroundConfig.endColor})` };
+    };
+
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-8 relative overflow-hidden bg-apple-gray text-[#111]">
             {/* Header */}
@@ -58,7 +63,7 @@ export const RecorderUI: React.FC = () => {
                 </div>
             </header>
 
-            {/* Draggable Controls (Only when recording) */}
+            {/* Draggable Controls (Active during recording) */}
             {isRecording && (
                 <DraggableControls
                     isPaused={false}
@@ -70,7 +75,7 @@ export const RecorderUI: React.FC = () => {
 
             <main className="w-full max-w-6xl flex flex-col items-center gap-8 z-0">
 
-                {/* Idle / Hero State */}
+                {/* 1. IDLE STATE */}
                 {!isRecording && !previewBlobUrl && (
                     <div className="text-center space-y-6 max-w-lg animated-fade-in">
                         <h1 className="text-5xl font-bold tracking-tighter text-neutral-900 leading-tight">
@@ -107,45 +112,56 @@ export const RecorderUI: React.FC = () => {
                     </div>
                 )}
 
-                {/* Recording State - Hidden Canvas (We render to offscreen/hidden canvas mostly, but we can show preview) */}
-                {/* Actually, user might want to see what's being recorded. vzoneui hides it. 
-                    Let's hide the main canvas during recording to focus on the content being recorded.
-                    Or show a small confidence monitor?
-                    Let's stick to vzoneui style: Minimal UI. 
-                 */}
-                <div className={`relative w-full aspect-video bg-black/5 rounded-2xl overflow-hidden shadow-inner border border-black/10 
-                    ${isRecording ? 'opacity-0 pointer-events-none absolute' : ''} 
-                    ${!isRecording && !previewBlobUrl ? 'hidden' : ''} 
-                `}>
-                    {/* Canvas for Previewing Blob or Live Stream (if we wanted) */}
-                    {/* If we have a blob, show video element */}
-                    {previewBlobUrl ? (
-                        <video
-                            src={previewBlobUrl}
-                            controls
-                            className="w-full h-full object-contain bg-black"
-                        />
-                    ) : (
-                        /* This canvas is used by useRecorder to render frames. We keep it mounted but hidden if needed. */
-                        <canvas ref={canvasRef} className="w-full h-full object-contain" />
-                    )}
+                {/* 2. RECORDING STATE (Hidden Canvas) */}
+                {/* We keep the canvas mounted to drive the render loop, but hide it visually to let user focus on source */}
+                <div className={`fixed inset-0 pointer-events-none opacity-0 ${isRecording ? 'block' : 'hidden'}`}>
+                    <canvas ref={canvasRef} width={1920} height={1080} />
                 </div>
 
-                {/* Finished State Sidebar */}
+
+                {/* 3. FINISHED / PREVIEW STATE */}
                 {previewBlobUrl && (
-                    <div className="w-full flex justify-center gap-4 animate-in slide-in-from-bottom-4">
-                        <a
-                            href={previewBlobUrl}
-                            download={`recording-${Date.now()}.mp4`}
-                            className="px-8 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium shadow-lg hover:shadow-green-500/20 transition-all flex items-center gap-2"
+                    <div className="w-full flex flex-col lg:flex-row gap-8 items-start animate-in fade-in slide-in-from-bottom-8 duration-700">
+                        {/* Video Container */}
+                        <div
+                            className="flex-1 aspect-video rounded-2xl shadow-2xl overflow-hidden relative flex items-center justify-center transition-all duration-500"
+                            style={getBackgroundStyle()}
                         >
-                            <Download size={18} />
-                            Download MP4
-                        </a>
+                            {/* Inner Video Frame */}
+                            <div className="relative w-[85%] h-[85%] rounded-lg overflow-hidden shadow-lg bg-black">
+                                <video
+                                    src={previewBlobUrl}
+                                    controls
+                                    className="w-full h-full object-contain"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Sidebar */}
+                        <div className="w-full lg:w-80 space-y-8 p-1">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100">
+                                <h3 className="text-sm font-bold text-neutral-900 mb-4 flex items-center gap-2">
+                                    <Zap size={16} className="text-yellow-500" />
+                                    Ready to Export
+                                </h3>
+                                <div className="text-sm text-neutral-600 mb-4">
+                                    Your recording is processed and ready.
+                                </div>
+                            </div>
+
+                            <a
+                                href={previewBlobUrl}
+                                download={`vzone-recording-${Date.now()}.mp4`}
+                                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg hover:shadow-blue-500/20 transition-all flex justify-center items-center gap-2"
+                            >
+                                <Download size={18} />
+                                Download MP4
+                            </a>
+                        </div>
                     </div>
                 )}
-
             </main>
         </div>
     );
 };
+```

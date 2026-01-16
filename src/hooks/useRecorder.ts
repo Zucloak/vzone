@@ -15,7 +15,8 @@ export const useRecorder = () => {
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
 
-    // Background State (Ref for render loop access)
+    // Background State
+    const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>({ type: 'solid', color: '#171717' });
     const backgroundRef = useRef<BackgroundConfig>({ type: 'solid', color: '#171717' });
 
     // Mouse tracking state
@@ -36,6 +37,7 @@ export const useRecorder = () => {
     }, []);
 
     const setBackground = useCallback((config: BackgroundConfig) => {
+        setBackgroundConfig(config);
         backgroundRef.current = config;
     }, []);
 
@@ -190,6 +192,6 @@ export const useRecorder = () => {
         canvasRef,
         previewBlobUrl,
         setBackground,
-        backgroundConfig: backgroundRef.current
+        backgroundConfig
     };
 };
