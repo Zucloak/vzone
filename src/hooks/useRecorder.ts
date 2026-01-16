@@ -183,6 +183,9 @@ export const useRecorder = () => {
 
     const stopRecording = useCallback(async () => {
         try {
+            // Stop Worker Loop
+            workerRef.current?.postMessage('stop');
+
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
             setIsRecording(false);
 
