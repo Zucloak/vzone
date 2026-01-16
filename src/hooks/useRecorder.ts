@@ -88,10 +88,13 @@ export const useRecorder = () => {
             });
 
             encoder.configure({
-                codec: 'avc1.42001f', // Baseline 3.1
+                // Level 4.2 (supports 1080p @ 60fps)
+                // Profile: Baseline (42) or Main (4d) or High (64). 
+                // Let's use Constrained Baseline (42002a) for max compatibility but higher level.
+                codec: 'avc1.42002a',
                 width: 1920,
                 height: 1080,
-                bitrate: 5_000_000, // 5 Mbps
+                bitrate: 6_000_000, // 6 Mbps
                 framerate: 60,
             });
             videoEncoderRef.current = encoder;
@@ -176,6 +179,8 @@ export const useRecorder = () => {
 
             // Bring focus back to this window
             window.focus();
+            // Optional: Notification or Alert to ensure user knows to come back if focus fails
+            // alert("Recording Finished! View your video.");
 
             if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
                 try {
