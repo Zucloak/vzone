@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-apple-gray text-apple-dark antialiased;
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.gradient-bg {
+  background: radial-gradient(circle at 50% 50%, #ff9a9e 0%, #fecfef 99%, #fecfef 100%);
+  /* More complex Apple-like mesh gradient later */
+  background: conic-gradient(from 180deg at 50% 50%, #FFBBC2 0deg, #FBEAFF 120deg, #E0F5FF 240deg, #FFBBC2 360deg);
+  filter: blur(60px);
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  z-index: -1;
+  animation: rotate 20s linear infinite;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

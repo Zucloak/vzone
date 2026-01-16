@@ -1,0 +1,16 @@
+[package]
+name = "recorder_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bytes = "1.11.0"
+js-sys = "0.3.85"
+mp4 = "0.14.0"
+serde = "1.0.228"
+serde-wasm-bindgen = "0.6.5"
+wasm-bindgen = "0.2.108"
+web-sys = "0.3.85"
