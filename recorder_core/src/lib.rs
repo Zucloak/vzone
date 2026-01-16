@@ -142,14 +142,60 @@ struct InnerMuxer {
 #[wasm_bindgen]
 impl Mp4Muxer {
     #[wasm_bindgen(constructor)]
-    pub fn new(width: u32, height: u32) -> Mp4Muxer {
-        web_sys::console::log_1(&"Mp4Muxer::new called".into());
+    pub fn new(width: u32, height: u32, description: &[u8]) -> Mp4Muxer {
+        web_sys::console::log_1(&"Mp4Muxer::new called with config".into());
+        
+        // Parse AVCC (description)
+        // Format: [ver, profile, compat, level, len_size_minus_1, num_sps, (sps_len, sps)..., num_pps, (pps_len, pps)...]
+        
+        let mut sps = vec![];
+        let mut pps = vec![];
+        
+        if description.len() > 6 {
+            // Byte 5 is num_sps (usually with lower 5 bits, effectively usually 1)
+            let num_sps = description[5] & 0x1F;
+            let mut offset = 6;
+            
+            if num_sps > 0 {
+                // Read first SPS
+                if offset + 2 <= description.len() {
+                    let sps_len = ((description[offset] as usize) << 8) | (description[offset + 1] as usize);
+                    offset += 2;
+                     if offset + sps_len <= description.len() {
+                        sps = description[offset..offset + sps_len].to_vec();
+                        offset += sps_len;
+                     }
+                }
+            }
+             
+            // Read PPS
+             if offset < description.len() {
+                 let num_pps = description[offset];
+                 offset += 1;
+                 if num_pps > 0 {
+                     if offset + 2 <= description.len() {
+                        let pps_len = ((description[offset] as usize) << 8) | (description[offset + 1] as usize);
+                        offset += 2;
+                        if offset + pps_len <= description.len() {
+                            pps = description[offset..offset + pps_len].to_vec();
+                        }
+                     }
+                 }
+             }
+        }
+        
+        if sps.is_empty() || pps.is_empty() {
+            web_sys::console::warn_1(&"Failed to parse AVCC, using dummy values. Video might be black.".into());
+            sps = vec![0, 0, 0, 1];
+            pps = vec![0, 0, 0, 1];
+        } else {
+             web_sys::console::log_1(&format!("Parsed SPS (len={}) and PPS (len={})", sps.len(), pps.len()).into());
+        }
+
         let buffer = Vec::new();
         let cursor = Cursor::new(buffer);
         
         web_sys::console::log_1(&"Creating Mp4Writer...".into());
-        // Use 'isom' which is standard. 'mp41' should work but 'isom' is safer.
-        // Also handle the result without unwrapping if possible, or unwrap with message.
         let brand = "isom".parse().map_err(|_| "Failed to parse brand").unwrap();
         
         let mut writer = mp4::Mp4Writer::write_start(cursor, &mp4::Mp4Config {
@@ -167,8 +213,8 @@ impl Mp4Muxer {
             media_conf: mp4::MediaConfig::AvcConfig(mp4::AvcConfig {
                 width: width as u16,
                 height: height as u16,
-                seq_param_set: vec![0, 0, 0, 1], 
-                pic_param_set: vec![0, 0, 0, 1],
+                seq_param_set: sps, 
+                pic_param_set: pps,
             }),
         }).expect("Failed to add track");
 
