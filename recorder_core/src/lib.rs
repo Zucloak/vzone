@@ -148,10 +148,14 @@ impl Mp4Muxer {
         let cursor = Cursor::new(buffer);
         
         web_sys::console::log_1(&"Creating Mp4Writer...".into());
+        // Use 'isom' which is standard. 'mp41' should work but 'isom' is safer.
+        // Also handle the result without unwrapping if possible, or unwrap with message.
+        let brand = "isom".parse().map_err(|_| "Failed to parse brand").unwrap();
+        
         let mut writer = mp4::Mp4Writer::write_start(cursor, &mp4::Mp4Config {
-            major_brand: str::parse("mp41").unwrap(),
+            major_brand: brand,
             minor_version: 512,
-            compatible_brands: vec![str::parse("mp41").unwrap()],
+            compatible_brands: vec![brand],
             timescale: 1000,
         }).expect("Failed to write start");
         
@@ -163,7 +167,7 @@ impl Mp4Muxer {
             media_conf: mp4::MediaConfig::AvcConfig(mp4::AvcConfig {
                 width: width as u16,
                 height: height as u16,
-                seq_param_set: vec![0, 0, 0, 1], // Minimal dummy SPS to avoid panic if crate checks?
+                seq_param_set: vec![0, 0, 0, 1], 
                 pic_param_set: vec![0, 0, 0, 1],
             }),
         }).expect("Failed to add track");

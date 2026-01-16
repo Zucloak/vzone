@@ -42,8 +42,9 @@ export const useRecorder = () => {
     }, []);
 
     const startRecording = useCallback(async () => {
+        let displayMedia: MediaStream | null = null;
         try {
-            const displayMedia = await navigator.mediaDevices.getDisplayMedia({
+            displayMedia = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
@@ -157,7 +158,14 @@ export const useRecorder = () => {
 
         } catch (err) {
             console.error("Error starting recording:", err);
+            // Critical: If we failed to start (e.g. Muxer crash), ensure we cleanup the stream
+            // otherwise user gets red dot but no recording app logic.
+            if (displayMedia) {
+                displayMedia.getTracks().forEach(t => t.stop());
+            }
+            setStream(null);
             setIsRecording(false);
+            alert("Failed to start recording core. Please check permissions or refresh.");
         }
     }, []);
 
