@@ -37,6 +37,7 @@ export const RecorderUI: React.FC = () => {
 
         const handleMessage = (e: MessageEvent) => {
             if (e.data?.type === 'STOP_RECORDING') {
+                window.focus(); // Bring main window to front
                 stopRecording();
             }
         };
