@@ -21,8 +21,12 @@ export default function ControlsWindow() {
 
     const handleStop = () => {
         if (window.opener) {
+            // Focus the parent window first
+            window.opener.focus();
+            // Send stop message
             window.opener.postMessage({ type: 'STOP_RECORDING' }, '*');
-            window.close();
+            // Close popup after short delay to ensure message is received
+            setTimeout(() => window.close(), 100);
         } else {
             alert("Parent window lost!");
         }

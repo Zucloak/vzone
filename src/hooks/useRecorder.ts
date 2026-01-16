@@ -196,7 +196,10 @@ export const useRecorder = () => {
             // Stop Worker Loop
             workerRef.current?.postMessage('stop');
 
-            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+            if (requestRef.current) {
+                clearInterval(requestRef.current); // Changed from cancelAnimationFrame
+                requestRef.current = 0;
+            }
             setIsRecording(false);
 
             // Bring focus back to this window
