@@ -187,12 +187,10 @@ export const useRecorder = () => {
                 const elapsedMs = performance.now() - startTimeRef.current;
                 const timestamp = elapsedMs * 1000; // microseconds
 
-                // Diagnostic logging
-                if (frameCountRef.current === 0) {
-                    console.log("📹 Frame 0 timestamp:", timestamp, "μs");
-                } else if (frameCountRef.current % 60 === 0) {
+                // Diagnostic logging - EVERY 30 frames to see if loop is running
+                if (frameCountRef.current % 30 === 0) {
                     const expected = (frameCountRef.current / 60 * 1000);
-                    console.log(`Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms for 60fps`);
+                    console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 60fps`);
                 }
 
                 const frame = new VideoFrame(canvasRef.current, { timestamp });
