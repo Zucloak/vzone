@@ -27,6 +27,7 @@ export const useRecorder = () => {
     const currentTargetRef = useRef({ x: 960, y: 540 }); // Smooth target tracking
     const prevDetectedTargetRef = useRef({ x: 960, y: 540 }); // For velocity calc
     const workerRef = useRef<Worker | null>(null);
+    const isProcessorActiveRef = useRef(false);
 
     useEffect(() => {
         // Init Wasm
@@ -56,6 +57,10 @@ export const useRecorder = () => {
     }, []);
 
     const stopRecording = useCallback(async () => {
+        // Prevent double entry
+        if (!isProcessorActiveRef.current) return;
+        isProcessorActiveRef.current = false;
+
         try {
             // Stop Worker Loop
             workerRef.current?.postMessage('stop');
@@ -65,11 +70,12 @@ export const useRecorder = () => {
                 clearInterval(requestRef.current);
                 requestRef.current = 0;
             }
-            setIsRecording(false);
 
             // Bring focus back to this window
             window.focus();
 
+            // Flush and Close Encoder BEFORE hiding canvas (setIsRecording false)
+            // This prevents "Can't readback frame textures" error
             if (videoEncoderRef.current) {
                 if ((videoEncoderRef.current.state as string) !== 'closed') {
                     try {
@@ -82,6 +88,8 @@ export const useRecorder = () => {
                     }
                 }
             }
+
+            setIsRecording(false);
 
             if (stream) {
                 stream.getTracks().forEach(t => t.stop());
@@ -200,6 +208,8 @@ export const useRecorder = () => {
             video.play();
 
             const draw = () => {
+                if (!isProcessorActiveRef.current) return;
+
                 if (frameCountRef.current % 60 === 0) {
                     console.log(`🎨 draw() called for frame ${frameCountRef.current}`);
                 }
@@ -392,6 +402,10 @@ export const useRecorder = () => {
             video.onloadedmetadata = () => {
                 console.log("📺 Video loaded, starting Worker loop...");
 
+                // Activate Processor
+                isProcessorActiveRef.current = true;
+                setIsRecording(true);
+
                 // Set up worker message handler to drive the loop
                 if (workerRef.current) {
                     workerRef.current.onmessage = (e) => {
@@ -400,7 +414,7 @@ export const useRecorder = () => {
                                 draw();
                             } catch (err) {
                                 console.error("❌ draw() error:", err);
-                                stopRecording();
+                                // Don't recurse stopRecording in critical path, just log
                             }
                         }
                     };
@@ -409,8 +423,6 @@ export const useRecorder = () => {
                     console.log("🚀 Worker loop started");
                 }
             };
-
-            setIsRecording(true);
 
             // Stop handler
             track.onended = () => {
