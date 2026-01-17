@@ -47,8 +47,8 @@ impl CameraRig {
             vy: 0.0,
             zoom_level: 1.0,
             target_zoom: 1.0,
-            stiffness: 100.0, // Smoother
-            damping: 20.0,    // Critically Damped (sqrt(100)*2)
+            stiffness: 40.0,  // Much softer/slower
+            damping: 12.6,    // Critically Damped (sqrt(40)*2 = 12.649)
             mass: 1.0,
             src_width,
             src_height,
@@ -78,7 +78,7 @@ impl CameraRig {
 
         // Smooth zoom
         let zoom_diff = self.target_zoom - self.zoom_level;
-        self.zoom_level += zoom_diff * 4.0 * dt; 
+        self.zoom_level += zoom_diff * 2.0 * dt; // Slower zoom transition
 
         // Boundary Constraints
         // Ensure the view rectangle (defined by x, y, zoom) never goes outside (0,0, src_width, src_height).

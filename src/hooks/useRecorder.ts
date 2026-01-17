@@ -143,8 +143,14 @@ export const useRecorder = () => {
             const width = settings.width || 1920;
             const height = settings.height || 1080;
 
-            // Initialize Camera Rig
+            console.log(`🎥 Source resolution detected: ${width}x${height}`);
+
+            // Initialize Camera Rig with actual dimensions
             rigRef.current = new CameraRig(width, height);
+
+            // Set initial target to center of actual screen
+            currentTargetRef.current = { x: width / 2, y: height / 2 };
+            prevDetectedTargetRef.current = { x: width / 2, y: height / 2 };
 
             // Initialize VideoEncoder
             const encoder = new VideoEncoder({
@@ -154,7 +160,7 @@ export const useRecorder = () => {
                         const description = new Uint8Array(metadata.decoderConfig.description as ArrayBuffer);
                         console.log("Initializing Muxer with AVCC config, length:", description.length);
                         try {
-                            muxerRef.current = new Mp4Muxer(1920, 1080, description);
+                            muxerRef.current = new Mp4Muxer(width, height, description);
                         } catch (e) {
                             console.error("Failed to create Muxer:", e);
                             return;
@@ -180,8 +186,8 @@ export const useRecorder = () => {
                 // Profile: Baseline (42) or Main (4d) or High (64). 
                 // Let's use Constrained Baseline (42002a) for max compatibility but higher level.
                 codec: 'avc1.42002a',
-                width: 1920,
-                height: 1080,
+                width: width,
+                height: height,
                 bitrate: 6_000_000, // 6 Mbps
                 framerate: 60,
             });
@@ -263,9 +269,9 @@ export const useRecorder = () => {
 
                     // If enough pixels changed, update target
                     if (totalMass > 5) { // Minimum blob size
-                        // Scale back up to 1920x1080
-                        const avgX = (totalX / totalMass) * (1920 / 64);
-                        const avgY = (totalY / totalMass) * (1080 / 36);
+                        // Scale back up to Source Dimensions
+                        const avgX = (totalX / totalMass) * (width / 64);
+                        const avgY = (totalY / totalMass) * (height / 36);
 
                         detectedX = avgX;
                         detectedY = avgY;
@@ -326,26 +332,26 @@ export const useRecorder = () => {
                 }
 
                 // Config Canvas
-                canvasRef.current.width = 1920;
-                canvasRef.current.height = 1080;
+                canvasRef.current.width = width;
+                canvasRef.current.height = height;
 
                 // 1. Fill Background
                 const bg = backgroundRef.current;
                 if (bg.type === 'solid') {
                     ctx.fillStyle = bg.color;
-                    ctx.fillRect(0, 0, 1920, 1080);
+                    ctx.fillRect(0, 0, width, height);
                 } else if (bg.type === 'gradient' && bg.startColor && bg.endColor) {
-                    const gradient = ctx.createLinearGradient(0, 0, 1920, 1080); // Diagonal-ish or horizontal?
-                    // vzoneui uses 'to right' which is 0,0 -> 1920,0
+                    const gradient = ctx.createLinearGradient(0, 0, width, height); // Diagonal-ish or horizontal?
+                    // vzoneui uses 'to right' which is 0,0 -> width,0
                     gradient.addColorStop(0, bg.startColor);
                     gradient.addColorStop(1, bg.endColor);
                     ctx.fillStyle = gradient;
-                    ctx.fillRect(0, 0, 1920, 1080);
+                    ctx.fillRect(0, 0, width, height);
                 }
 
                 // 2. Draw Video Frame (Centered Transform)
                 ctx.save();
-                ctx.translate(960, 540); // Center of canvas
+                ctx.translate(width / 2, height / 2); // Center of canvas
                 ctx.scale(view.zoom, view.zoom);
                 ctx.translate(-view.x, -view.y); // Move focus point to center
                 ctx.drawImage(video, 0, 0);
