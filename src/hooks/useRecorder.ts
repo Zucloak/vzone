@@ -25,6 +25,7 @@ export const useRecorder = () => {
     const prevFrameDataRef = useRef<Uint8ClampedArray | null>(null);
     const lastMotionTimeRef = useRef<number>(0);
     const currentTargetRef = useRef({ x: 960, y: 540 }); // Smooth target tracking
+    const prevDetectedTargetRef = useRef({ x: 960, y: 540 }); // For velocity calc
     const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
@@ -258,11 +259,21 @@ export const useRecorder = () => {
                         // Faster target acquisition, physics handles smoothing
                         currentTargetRef.current.x = detectedX;
                         currentTargetRef.current.y = detectedY;
-                    }
 
-                    // Smart Autozoom: Lower threshold to catch small movements/clicks
-                    if (totalMass > 12) {
-                        rigRef.current.set_target_zoom(1.8);
+                        // Calculate velocity of the detected centroid
+                        const dx = detectedX - prevDetectedTargetRef.current.x;
+                        const dy = detectedY - prevDetectedTargetRef.current.y;
+                        const velocity = Math.sqrt(dx * dx + dy * dy);
+
+                        // Update history
+                        prevDetectedTargetRef.current.x = detectedX;
+                        prevDetectedTargetRef.current.y = detectedY;
+
+                        // Smart Autozoom: Only zoom if mass is high (action) AND velocity is low (staying in place)
+                        // This simulates "Zoom on Click/Type"
+                        if (totalMass > 12 && velocity < 50) {
+                            rigRef.current.set_target_zoom(1.8);
+                        }
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
@@ -276,9 +287,6 @@ export const useRecorder = () => {
                 if (timeSinceMotion > 2000) { // 2s idle
                     // Zoom OUT
                     rigRef.current.set_target_zoom(1.0);
-                    // Drift back to center slowly
-                    currentTargetRef.current.x += (960 - currentTargetRef.current.x) * 0.05;
-                    currentTargetRef.current.y += (540 - currentTargetRef.current.y) * 0.05;
                 }
 
                 // Use Motion Target for Physics

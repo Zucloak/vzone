@@ -47,8 +47,8 @@ impl CameraRig {
             vy: 0.0,
             zoom_level: 1.0,
             target_zoom: 1.0,
-            stiffness: 180.0, // Snappier
-            damping: 22.0,   // More controlled
+            stiffness: 100.0, // Smoother
+            damping: 20.0,    // Critically Damped (sqrt(100)*2)
             mass: 1.0,
             src_width,
             src_height,
