@@ -47,8 +47,8 @@ impl CameraRig {
             vy: 0.0,
             zoom_level: 1.0,
             target_zoom: 1.0,
-            stiffness: 120.0,
-            damping: 15.0,
+            stiffness: 180.0, // Snappier
+            damping: 22.0,   // More controlled
             mass: 1.0,
             src_width,
             src_height,
@@ -60,6 +60,7 @@ impl CameraRig {
     }
 
     pub fn update(&mut self, target_x: f64, target_y: f64, dt: f64) {
+        // Apply physics to x,y core
         let dist_x = target_x - self.x;
         let dist_y = target_y - self.y;
         
@@ -75,25 +76,27 @@ impl CameraRig {
         self.x += self.vx * dt;
         self.y += self.vy * dt;
 
+        // Smooth zoom
         let zoom_diff = self.target_zoom - self.zoom_level;
-        self.zoom_level += zoom_diff * 5.0 * dt; 
+        self.zoom_level += zoom_diff * 4.0 * dt; 
     }
 
     pub fn get_view_rect(&self) -> JsValue {
-        let width = self.src_width / self.zoom_level;
-        let height = self.src_height / self.zoom_level;
-
-        let mut left = self.x - width / 2.0;
-        let mut top = self.y - height / 2.0;
-
-        if left < 0.0 { left = 0.0; } 
-        else if left + width > self.src_width { left = self.src_width - width; }
-
-        if top < 0.0 { top = 0.0; } 
-        else if top + height > self.src_height { top = self.src_height - height; }
+        // Return centered coordinates and scale
+        // JS will use these to apply a transform
+        #[derive(Serialize)]
+        struct ViewState {
+            x: f64,
+            y: f64,
+            zoom: f64,
+        }
         
-        let rect = Rect { x: left, y: top, width, height };
-        serde_wasm_bindgen::to_value(&rect).unwrap()
+        let state = ViewState {
+            x: self.x,
+            y: self.y,
+            zoom: self.zoom_level,
+        };
+        serde_wasm_bindgen::to_value(&state).unwrap()
     }
 }
 
@@ -137,6 +140,7 @@ pub struct Mp4Muxer {
 struct InnerMuxer {
     writer: mp4::Mp4Writer<Cursor<Vec<u8>>>,
     frame_count: u64,
+    last_timestamp: u64,
 }
 
 #[wasm_bindgen]
@@ -202,13 +206,13 @@ impl Mp4Muxer {
             major_brand: brand,
             minor_version: 512,
             compatible_brands: vec![brand],
-            timescale: 1000,
+            timescale: 1_000_000, // microseconds to match VideoFrame timestamps
         }).expect("Failed to write start");
         
         web_sys::console::log_1(&"Adding track...".into());
         writer.add_track(&mp4::TrackConfig {
             track_type: mp4::TrackType::Video,
-            timescale: 1000,
+            timescale: 1_000_000, // microseconds to match VideoFrame timestamps
             language: String::from("und"),
             media_conf: mp4::MediaConfig::AvcConfig(mp4::AvcConfig {
                 width: width as u16,
@@ -223,6 +227,7 @@ impl Mp4Muxer {
         let inner = Box::new(InnerMuxer {
             writer,
             frame_count: 0,
+            last_timestamp: 0,
         });
 
         Mp4Muxer {
@@ -235,10 +240,20 @@ impl Mp4Muxer {
             let inner = &mut *(self.inner as *mut InnerMuxer);
             let bytes = bytes::Bytes::copy_from_slice(data);
             
+            // Calculate accurate duration based on timestamp difference
+            // For 60fps, default duration is ~16666 microseconds
+            let duration = if inner.frame_count == 0 {
+                16666 // ~60fps for first frame
+            } else {
+                (timestamp - inner.last_timestamp).max(1) as u32
+            };
+            
+            inner.last_timestamp = timestamp;
+            
             // We need to create a Sample
             let sample = mp4::Mp4Sample {
                 start_time: timestamp,
-                duration: 33, // assume 30fps or provided?
+                duration, // accurate duration based on timestamps
                 rendering_offset: 0,
                 is_sync: is_key,
                 bytes,

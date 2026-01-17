@@ -183,14 +183,20 @@ export const RecorderUI: React.FC = () => {
                                 </div>
                             </div>
 
-                            <a
-                                href={previewBlobUrl}
-                                download={`vzone-recording-${Date.now()}.mp4`}
+                            <button
+                                onClick={() => {
+                                    const a = document.createElement('a');
+                                    a.href = previewBlobUrl;
+                                    a.download = `vzone-recording-${Date.now()}.mp4`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                }}
                                 className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg hover:shadow-blue-500/20 transition-all flex justify-center items-center gap-2"
                             >
                                 <Download size={18} />
                                 Download MP4
-                            </a>
+                            </button>
                         </div>
                     </div>
                 )}

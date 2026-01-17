@@ -20,9 +20,11 @@ export const useRecorder = () => {
     const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>({ type: 'solid', color: '#171717' });
     const backgroundRef = useRef<BackgroundConfig>({ type: 'solid', color: '#171717' });
 
-    // Mouse tracking state
-    const cursorRef = useRef({ x: 960, y: 540 }); // Start center
-    const lastMouseMoveRef = useRef<number>(Date.now());
+    const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const motionContextRef = useRef<CanvasRenderingContext2D | null>(null);
+    const prevFrameDataRef = useRef<Uint8ClampedArray | null>(null);
+    const lastMotionTimeRef = useRef<number>(0);
+    const currentTargetRef = useRef({ x: 960, y: 540 }); // Smooth target tracking
     const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
@@ -32,17 +34,17 @@ export const useRecorder = () => {
             setIsReady(true);
         });
 
-        const handleMouseMove = (e: MouseEvent) => {
-            cursorRef.current = { x: e.clientX, y: e.clientY };
-            lastMouseMoveRef.current = Date.now();
-        };
-        window.addEventListener('mousemove', handleMouseMove);
+        // Initialize motion canvas
+        const mCanvas = document.createElement('canvas');
+        mCanvas.width = 64; // Low res for performance
+        mCanvas.height = 36;
+        motionCanvasRef.current = mCanvas;
+        motionContextRef.current = mCanvas.getContext('2d', { willReadFrequently: true });
 
         // Init Worker
         workerRef.current = new Worker(new URL('../workers/timer.worker.ts', import.meta.url), { type: 'module' });
 
         return () => {
-            window.removeEventListener('mousemove', handleMouseMove);
             workerRef.current?.terminate();
         };
     }, []);
@@ -51,6 +53,65 @@ export const useRecorder = () => {
         setBackgroundConfig(config);
         backgroundRef.current = config;
     }, []);
+
+    const stopRecording = useCallback(async () => {
+        try {
+            // Stop Worker Loop
+            workerRef.current?.postMessage('stop');
+
+            // Clear any lingering interval if it exists (though we use worker now)
+            if (requestRef.current) {
+                clearInterval(requestRef.current);
+                requestRef.current = 0;
+            }
+            setIsRecording(false);
+
+            // Bring focus back to this window
+            window.focus();
+
+            if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
+                try {
+                    await videoEncoderRef.current.flush();
+                } catch (e) {
+                    console.error("Encoder flush warning:", e);
+                }
+                videoEncoderRef.current.close();
+            }
+
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                setStream(null);
+            }
+
+            if (muxerRef.current) {
+                try {
+                    const bytes = muxerRef.current.finish();
+                    console.log("Muxer finished. Total bytes:", bytes.length);
+
+                    if (bytes.length < 1000) {
+                        console.warn("⚠️ Warning: Video file is surprisingly small (<1KB). Recording might have failed.");
+                        alert("Warning: Recording seems empty. Please check permissions / console.");
+                    }
+
+                    // Use video/mp4 for correct format detection
+                    const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
+                    const url = URL.createObjectURL(blob);
+                    console.log("Setting preview URL:", url);
+                    setPreviewBlobUrl(url);
+                } catch (e) {
+                    console.error("Muxer finish failed:", e);
+                    alert("Muxer Error on Finish: " + e);
+                }
+                muxerRef.current = null;
+            } else {
+                console.warn("Muxer was null in stopRecording! No video data.");
+                alert("No video data was recorded. (Muxer not initialized - did recording start?)");
+            }
+        } catch (err) {
+            console.error("Critical error in stopRecording:", err);
+            setIsRecording(false);
+        }
+    }, [stream]);
 
     const startRecording = useCallback(async () => {
         let displayMedia: MediaStream | null = null;
@@ -70,6 +131,7 @@ export const useRecorder = () => {
 
             setStream(displayMedia);
             setPreviewBlobUrl(null);
+            lastMotionTimeRef.current = Date.now();
 
             const track = displayMedia.getVideoTracks()[0];
             const settings = track.getSettings();
@@ -97,6 +159,7 @@ export const useRecorder = () => {
                     if (muxerRef.current) {
                         const buffer = new Uint8Array(chunk.byteLength);
                         chunk.copyTo(buffer);
+                        // Muxer uses timescale: 1,000,000 (microseconds) to match VideoFrame
                         muxerRef.current.add_frame(
                             buffer,
                             chunk.type === 'key',
@@ -145,21 +208,82 @@ export const useRecorder = () => {
                     return;
                 }
 
-                // Auto-Center Logic: If mouse idle > 2s, zoom out to full screen
-                let targetX = cursorRef.current.x;
-                let targetY = cursorRef.current.y;
+                // --- Motion Detection Logic ---
+                let detectedX = currentTargetRef.current.x;
+                let detectedY = currentTargetRef.current.y;
 
-                const timeSinceMove = Date.now() - lastMouseMoveRef.current;
-                if (timeSinceMove > 2000) {
-                    // No mouse activity - show full screen (centered)
-                    targetX = 1920 / 2;
-                    targetY = 1080 / 2;
+                if (motionContextRef.current && prevFrameDataRef.current) {
+                    const mCtx = motionContextRef.current;
+                    // Draw small frame
+                    mCtx.drawImage(video, 0, 0, 64, 36);
+                    const frameData = mCtx.getImageData(0, 0, 64, 36).data;
+                    const prevData = prevFrameDataRef.current;
 
-                    if (frameCountRef.current % 120 === 0) {
-                        console.log("🎯 Auto-Center ACTIVE - Time since last mouse:", timeSinceMove + "ms");
-                        console.log("   Target:", targetX, targetY);
+                    let totalX = 0;
+                    let totalY = 0;
+                    let totalMass = 0;
+                    const threshold = 15; // Sensitivity (Lower is more sensitive)
+
+                    for (let i = 0; i < frameData.length; i += 4) {
+                        // Simple luminosity diff
+                        const rDiff = Math.abs(frameData[i] - prevData[i]);
+                        const gDiff = Math.abs(frameData[i + 1] - prevData[i + 1]);
+                        const bDiff = Math.abs(frameData[i + 2] - prevData[i + 2]);
+
+                        // Check if pixel changed significantly
+                        if (rDiff + gDiff + bDiff > threshold) {
+                            const pixelIdx = i / 4;
+                            const x = pixelIdx % 64;
+                            const y = Math.floor(pixelIdx / 64);
+
+                            totalX += x;
+                            totalY += y;
+                            totalMass++;
+                        }
                     }
+
+                    // Save current frame for next loop
+                    prevFrameDataRef.current.set(frameData);
+
+                    // If enough pixels changed, update target
+                    if (totalMass > 5) { // Minimum blob size
+                        // Scale back up to 1920x1080
+                        const avgX = (totalX / totalMass) * (1920 / 64);
+                        const avgY = (totalY / totalMass) * (1080 / 36);
+
+                        detectedX = avgX;
+                        detectedY = avgY;
+                        lastMotionTimeRef.current = Date.now();
+
+                        // Faster target acquisition, physics handles smoothing
+                        currentTargetRef.current.x = detectedX;
+                        currentTargetRef.current.y = detectedY;
+                    }
+
+                    // Smart Autozoom: Lower threshold to catch small movements/clicks
+                    if (totalMass > 12) {
+                        rigRef.current.set_target_zoom(1.8);
+                    }
+                } else if (motionContextRef.current) {
+                    // First frame init
+                    motionContextRef.current.drawImage(video, 0, 0, 64, 36);
+                    const data = motionContextRef.current.getImageData(0, 0, 64, 36).data;
+                    prevFrameDataRef.current = new Uint8ClampedArray(data);
                 }
+
+                const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
+
+                if (timeSinceMotion > 2000) { // 2s idle
+                    // Zoom OUT
+                    rigRef.current.set_target_zoom(1.0);
+                    // Drift back to center slowly
+                    currentTargetRef.current.x += (960 - currentTargetRef.current.x) * 0.05;
+                    currentTargetRef.current.y += (540 - currentTargetRef.current.y) * 0.05;
+                }
+
+                // Use Motion Target for Physics
+                const targetX = currentTargetRef.current.x;
+                const targetY = currentTargetRef.current.y;
 
                 // Update Physics
                 rigRef.current.update(targetX, targetY, 1 / 60);
@@ -187,20 +311,22 @@ export const useRecorder = () => {
                     ctx.fillRect(0, 0, 1920, 1080);
                 }
 
-                // 2. Draw Video Frame (Cropped & Centered)
-                ctx.drawImage(
-                    video,
-                    view.x, view.y, view.width, view.height, // Source crop
-                    0, 0, 1920, 1080 // Destination (Full frame)
-                );
+                // 2. Draw Video Frame (Centered Transform)
+                ctx.save();
+                ctx.translate(960, 540); // Center of canvas
+                ctx.scale(view.zoom, view.zoom);
+                ctx.translate(-view.x, -view.y); // Move focus point to center
+                ctx.drawImage(video, 0, 0);
+                ctx.restore();
 
-                // Use REAL ELAPSED TIME
+                // Use REAL ELAPSED TIME - muxer uses milliseconds timescale
                 if (startTimeRef.current === 0) {
                     startTimeRef.current = performance.now();
                     console.log("🎬 Recording started at:", startTimeRef.current);
                 }
                 const elapsedMs = performance.now() - startTimeRef.current;
-                const timestamp = elapsedMs * 1000; // microseconds
+                // Muxer uses timescale=1000 (ms), so pass timestamp in ms
+                const timestamp = Math.round(elapsedMs * 1000); // microseconds for VideoFrame
 
                 // Diagnostic logging - EVERY 30 frames to see if loop is running
                 if (frameCountRef.current % 30 === 0) {
@@ -220,22 +346,24 @@ export const useRecorder = () => {
             };
 
             video.onloadedmetadata = () => {
-                console.log("📺 Video loaded, starting setInterval...");
-                let callbackCount = 0;
-                const intervalId = window.setInterval(() => {
-                    callbackCount++;
-                    if (callbackCount % 60 === 0) {
-                        console.log(`🔄 Interval callback #${callbackCount} fired`);
-                    }
-                    try {
-                        draw();
-                    } catch (e) {
-                        console.error("❌ draw() error:", e);
-                        clearInterval(intervalId);
-                    }
-                }, 16);
-                requestRef.current = intervalId;
-                console.log("⏰ Interval ID:", intervalId);
+                console.log("📺 Video loaded, starting Worker loop...");
+
+                // Set up worker message handler to drive the loop
+                if (workerRef.current) {
+                    workerRef.current.onmessage = (e) => {
+                        if (e.data === 'tick') {
+                            try {
+                                draw();
+                            } catch (err) {
+                                console.error("❌ draw() error:", err);
+                                stopRecording();
+                            }
+                        }
+                    };
+                    // Start the worker timer
+                    workerRef.current.postMessage('start');
+                    console.log("🚀 Worker loop started");
+                }
             };
 
             setIsRecording(true);
@@ -256,59 +384,9 @@ export const useRecorder = () => {
             setIsRecording(false);
             alert("Failed to start recording core. Please check permissions or refresh.");
         }
-    }, []);
+    }, [stopRecording]);
 
-    const stopRecording = useCallback(async () => {
-        try {
-            // Stop Worker Loop
-            workerRef.current?.postMessage('stop');
-
-            if (requestRef.current) {
-                clearInterval(requestRef.current); // Changed from cancelAnimationFrame
-                requestRef.current = 0;
-            }
-            setIsRecording(false);
-
-            // Bring focus back to this window
-            window.focus();
-            // Optional: Notification or Alert to ensure user knows to come back if focus fails
-            // alert("Recording Finished! View your video.");
-
-            if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
-                try {
-                    await videoEncoderRef.current.flush();
-                } catch (e) {
-                    console.error("Encoder flush warning:", e);
-                }
-                videoEncoderRef.current.close();
-            }
-
-            if (stream) {
-                stream.getTracks().forEach(t => t.stop());
-                setStream(null);
-            }
-
-            if (muxerRef.current) {
-                try {
-                    const bytes = muxerRef.current.finish();
-                    const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
-                    const url = URL.createObjectURL(blob);
-                    console.log("Setting preview URL:", url);
-                    setPreviewBlobUrl(url);
-                } catch (e) {
-                    console.error("Muxer finish failed:", e);
-                    alert("Muxer Error on Finish: " + e);
-                }
-                muxerRef.current = null;
-            } else {
-                console.warn("Muxer was null in stopRecording! No video data.");
-                alert("No video data was recorded. (Muxer not initialized - did recording start?)");
-            }
-        } catch (err) {
-            console.error("Critical error in stopRecording:", err);
-            setIsRecording(false);
-        }
-    }, [stream]);
+    // DELETED OLD stopRecording LOCATION
 
     return {
         isRecording,
