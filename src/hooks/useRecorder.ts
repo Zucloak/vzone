@@ -71,13 +71,13 @@ export const useRecorder = () => {
             window.focus();
 
             if (videoEncoderRef.current) {
-                if (videoEncoderRef.current.state !== 'closed') {
+                if ((videoEncoderRef.current.state as string) !== 'closed') {
                     try {
                         await videoEncoderRef.current.flush();
                     } catch (e) {
                         console.error("Encoder flush warning:", e);
                     }
-                    if (videoEncoderRef.current.state !== 'closed') {
+                    if ((videoEncoderRef.current.state as string) !== 'closed') {
                         videoEncoderRef.current.close();
                     }
                 }

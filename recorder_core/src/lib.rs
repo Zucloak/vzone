@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
-use std::io::{Cursor, Write};
+use std::io::Cursor;
 
 #[wasm_bindgen]
 extern "C" {
