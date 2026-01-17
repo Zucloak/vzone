@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm install -D wasm-pack && cd recorder_core && npx wasm-pack build --target web && cd .. && tsc -b && vite build",
+    "build": "./vercel-build.sh",
     "lint": "eslint .",
     "preview": "vite preview"
   },

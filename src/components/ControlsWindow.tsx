@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Pause, Square, Play } from 'lucide-react';
 import '../index.css';
 
 export default function ControlsWindow() {
     const [duration, setDuration] = useState(0);
-    const [isPaused, setIsPaused] = useState(false);
+    const [isPaused] = useState(false);
 
     useEffect(() => {
         const interval = setInterval(() => {
