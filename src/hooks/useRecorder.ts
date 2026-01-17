@@ -70,13 +70,17 @@ export const useRecorder = () => {
             // Bring focus back to this window
             window.focus();
 
-            if (videoEncoderRef.current && videoEncoderRef.current.state !== 'closed') {
-                try {
-                    await videoEncoderRef.current.flush();
-                } catch (e) {
-                    console.error("Encoder flush warning:", e);
+            if (videoEncoderRef.current) {
+                if (videoEncoderRef.current.state !== 'closed') {
+                    try {
+                        await videoEncoderRef.current.flush();
+                    } catch (e) {
+                        console.error("Encoder flush warning:", e);
+                    }
+                    if (videoEncoderRef.current.state !== 'closed') {
+                        videoEncoderRef.current.close();
+                    }
                 }
-                videoEncoderRef.current.close();
             }
 
             if (stream) {
@@ -223,6 +227,11 @@ export const useRecorder = () => {
                     let totalX = 0;
                     let totalY = 0;
                     let totalMass = 0;
+
+                    // Bounding Box of changes (0-63, 0-35)
+                    let minX = 64, maxX = 0;
+                    let minY = 36, maxY = 0;
+
                     const threshold = 15; // Sensitivity (Lower is more sensitive)
 
                     for (let i = 0; i < frameData.length; i += 4) {
@@ -240,6 +249,12 @@ export const useRecorder = () => {
                             totalX += x;
                             totalY += y;
                             totalMass++;
+
+                            // Update Bounding Box
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                            if (y < minY) minY = y;
+                            if (y > maxY) maxY = y;
                         }
                     }
 
@@ -269,9 +284,18 @@ export const useRecorder = () => {
                         prevDetectedTargetRef.current.x = detectedX;
                         prevDetectedTargetRef.current.y = detectedY;
 
-                        // Smart Autozoom: Only zoom if mass is high (action) AND velocity is low (staying in place)
-                        // This simulates "Zoom on Click/Type"
-                        if (totalMass > 12 && velocity < 50) {
+                        // Heuristic for Scrolling vs Clicking
+                        // Scrolling usually affects the entire height or width of the screen (or large parts)
+                        // 36 is the height of our analysis buffer.
+                        // If the changed area height > 12 (approx 1/3 of screen height), assume scroll.
+                        const heightChange = maxY - minY;
+                        const isScrolling = heightChange > 12;
+
+                        // Smart Autozoom: Only zoom if:
+                        // 1. Mass is high (action)
+                        // 2. Velocity is low (staying in place)
+                        // 3. NOT Scrolling (change area is compact)
+                        if (totalMass > 12 && velocity < 50 && !isScrolling) {
                             rigRef.current.set_target_zoom(1.8);
                         }
                     }
@@ -342,9 +366,15 @@ export const useRecorder = () => {
                     console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 60fps`);
                 }
 
-                const frame = new VideoFrame(canvasRef.current, { timestamp });
-                encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
-                frame.close();
+                if (encoder.state === "configured") {
+                    try {
+                        const frame = new VideoFrame(canvasRef.current, { timestamp });
+                        encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
+                        frame.close();
+                    } catch (e) {
+                         console.error("Frame encoding error:", e);
+                    }
+                }
 
                 frameCountRef.current++;
                 // Log every 30 frames to confirm loop is running  

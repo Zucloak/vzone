@@ -79,6 +79,27 @@ impl CameraRig {
         // Smooth zoom
         let zoom_diff = self.target_zoom - self.zoom_level;
         self.zoom_level += zoom_diff * 4.0 * dt; 
+
+        // Boundary Constraints
+        // Ensure the view rectangle (defined by x, y, zoom) never goes outside (0,0, src_width, src_height).
+        // view_width = src_width / zoom
+        // view_height = src_height / zoom
+        // min_x = view_width / 2
+        // max_x = src_width - min_x
+
+        let view_w = self.src_width / self.zoom_level;
+        let view_h = self.src_height / self.zoom_level;
+
+        let min_x = view_w / 2.0;
+        let max_x = self.src_width - min_x;
+        let min_y = view_h / 2.0;
+        let max_y = self.src_height - min_y;
+
+        // Clamp self.x and self.y
+        if self.x < min_x { self.x = min_x; self.vx = 0.0; }
+        if self.x > max_x { self.x = max_x; self.vx = 0.0; }
+        if self.y < min_y { self.y = min_y; self.vy = 0.0; }
+        if self.y > max_y { self.y = max_y; self.vy = 0.0; }
     }
 
     pub fn get_view_rect(&self) -> JsValue {
