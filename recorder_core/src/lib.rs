@@ -47,8 +47,8 @@ impl CameraRig {
             vy: 0.0,
             zoom_level: 1.0,
             target_zoom: 1.0,
-            stiffness: 40.0,  // Much softer/slower
-            damping: 12.6,    // Critically Damped (sqrt(40)*2 = 12.649)
+            stiffness: 80.0,  // Increased for faster response
+            damping: 17.9,    // Critically Damped for stiffness 80 (sqrt(80)*2)
             mass: 1.0,
             src_width,
             src_height,
@@ -60,9 +60,33 @@ impl CameraRig {
     }
 
     pub fn update(&mut self, target_x: f64, target_y: f64, dt: f64) {
-        // Apply physics to x,y core
-        let dist_x = target_x - self.x;
-        let dist_y = target_y - self.y;
+        // Smooth zoom first to know our constraints
+        let zoom_diff = self.target_zoom - self.zoom_level;
+        self.zoom_level += zoom_diff * 5.0 * dt; // Faster, smoother zoom transition
+        
+        // Clamp zoom to safe range (1.0 = no zoom, 2.0 = 2x zoom)
+        self.zoom_level = self.zoom_level.clamp(1.0, 2.5);
+
+        // Calculate view dimensions at current zoom
+        // When zoomed in, we see less of the source video
+        let view_w = self.src_width / self.zoom_level;
+        let view_h = self.src_height / self.zoom_level;
+
+        // Calculate safe bounds for camera position
+        // The camera (x, y) represents the center of our view
+        // So min/max are constrained to keep the view within source bounds
+        let min_x = view_w / 2.0;
+        let max_x = self.src_width - view_w / 2.0;
+        let min_y = view_h / 2.0;
+        let max_y = self.src_height - view_h / 2.0;
+
+        // Clamp target to valid bounds before applying physics
+        let clamped_target_x = target_x.clamp(min_x, max_x);
+        let clamped_target_y = target_y.clamp(min_y, max_y);
+        
+        // Apply physics to x,y using clamped target
+        let dist_x = clamped_target_x - self.x;
+        let dist_y = clamped_target_y - self.y;
         
         let force_x = self.stiffness * dist_x;
         let force_y = self.stiffness * dist_y;
@@ -76,30 +100,23 @@ impl CameraRig {
         self.x += self.vx * dt;
         self.y += self.vy * dt;
 
-        // Smooth zoom
-        let zoom_diff = self.target_zoom - self.zoom_level;
-        self.zoom_level += zoom_diff * 2.0 * dt; // Slower zoom transition
-
-        // Boundary Constraints
-        // Ensure the view rectangle (defined by x, y, zoom) never goes outside (0,0, src_width, src_height).
-        // view_width = src_width / zoom
-        // view_height = src_height / zoom
-        // min_x = view_width / 2
-        // max_x = src_width - min_x
-
-        let view_w = self.src_width / self.zoom_level;
-        let view_h = self.src_height / self.zoom_level;
-
-        let min_x = view_w / 2.0;
-        let max_x = self.src_width - min_x;
-        let min_y = view_h / 2.0;
-        let max_y = self.src_height - min_y;
-
-        // Clamp self.x and self.y
-        if self.x < min_x { self.x = min_x; self.vx = 0.0; }
-        if self.x > max_x { self.x = max_x; self.vx = 0.0; }
-        if self.y < min_y { self.y = min_y; self.vy = 0.0; }
-        if self.y > max_y { self.y = max_y; self.vy = 0.0; }
+        // Final clamp to ensure we never exceed bounds (safety net)
+        if self.x < min_x { 
+            self.x = min_x; 
+            self.vx = 0.0; 
+        }
+        if self.x > max_x { 
+            self.x = max_x; 
+            self.vx = 0.0; 
+        }
+        if self.y < min_y { 
+            self.y = min_y; 
+            self.vy = 0.0; 
+        }
+        if self.y > max_y { 
+            self.y = max_y; 
+            self.vy = 0.0; 
+        }
     }
 
     pub fn get_view_rect(&self) -> JsValue {

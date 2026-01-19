@@ -62,7 +62,7 @@ export const useRecorder = () => {
         isProcessorActiveRef.current = false;
 
         try {
-            // Stop Worker Loop
+            // Stop Worker Loop first to prevent new frames
             workerRef.current?.postMessage('stop');
 
             // Clear any lingering interval if it exists (though we use worker now)
@@ -74,28 +74,42 @@ export const useRecorder = () => {
             // Bring focus back to this window
             window.focus();
 
-            // Flush and Close Encoder BEFORE hiding canvas (setIsRecording false)
-            // This prevents "Can't readback frame textures" error
+            // Give a brief moment for any pending frame encoding to complete
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Flush and Close Encoder with improved error handling
             if (videoEncoderRef.current) {
-                if ((videoEncoderRef.current.state as string) !== 'closed') {
-                    try {
+                try {
+                    const encoderState = videoEncoderRef.current.state;
+                    console.log("Encoder state before flush:", encoderState);
+                    
+                    if (encoderState === 'configured') {
                         await videoEncoderRef.current.flush();
-                    } catch (e) {
-                        console.error("Encoder flush warning:", e);
+                        console.log("Encoder flushed successfully");
                     }
-                    if ((videoEncoderRef.current.state as string) !== 'closed') {
+                    
+                    // Check state again after flush
+                    if (videoEncoderRef.current.state !== 'closed') {
                         videoEncoderRef.current.close();
+                        console.log("Encoder closed successfully");
                     }
+                } catch (e) {
+                    console.error("Encoder cleanup error (non-critical):", e);
+                    // Continue with cleanup even if encoder fails
                 }
+                videoEncoderRef.current = null;
             }
 
-            setIsRecording(false);
-
+            // Stop media stream
             if (stream) {
                 stream.getTracks().forEach(t => t.stop());
                 setStream(null);
             }
 
+            // Only set recording to false after encoder is fully cleaned up
+            setIsRecording(false);
+
+            // Finalize muxer and create video blob
             if (muxerRef.current) {
                 try {
                     const bytes = muxerRef.current.finish();
@@ -248,7 +262,7 @@ export const useRecorder = () => {
                     let minX = 64, maxX = 0;
                     let minY = 36, maxY = 0;
 
-                    const threshold = 15; // Sensitivity (Lower is more sensitive)
+                    const threshold = 12; // More sensitive (lower = more sensitive)
 
                     for (let i = 0; i < frameData.length; i += 4) {
                         // Simple luminosity diff
@@ -278,7 +292,7 @@ export const useRecorder = () => {
                     prevFrameDataRef.current.set(frameData);
 
                     // If enough pixels changed, update target
-                    if (totalMass > 5) { // Minimum blob size
+                    if (totalMass > 3) { // Lower threshold for better sensitivity
                         // Scale back up to Source Dimensions
                         const avgX = (totalX / totalMass) * (width / 64);
                         const avgY = (totalY / totalMass) * (height / 36);
@@ -300,19 +314,24 @@ export const useRecorder = () => {
                         prevDetectedTargetRef.current.x = detectedX;
                         prevDetectedTargetRef.current.y = detectedY;
 
-                        // Heuristic for Scrolling vs Clicking
-                        // Scrolling usually affects the entire height or width of the screen (or large parts)
-                        // 36 is the height of our analysis buffer.
-                        // If the changed area height > 12 (approx 1/3 of screen height), assume scroll.
+                        // Improved heuristics for detecting action vs scrolling
+                        const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
-                        const isScrolling = heightChange > 12;
+                        const changeArea = widthChange * heightChange;
+                        
+                        // Scrolling typically affects large areas
+                        // Clicking/typing affects smaller, more localized areas
+                        const isScrolling = heightChange > 15 || widthChange > 40;
+                        const isLocalizedAction = changeArea < 300 && !isScrolling;
 
-                        // Smart Autozoom: Only zoom if:
-                        // 1. Mass is high (action)
-                        // 2. Velocity is low (staying in place)
-                        // 3. NOT Scrolling (change area is compact)
-                        if (totalMass > 12 && velocity < 50 && !isScrolling) {
+                        // Smart Autozoom: Zoom in for clicks, typing, and focused actions
+                        // Zoom out for scrolling and large movements
+                        if (isLocalizedAction && totalMass > 8 && velocity < 80) {
+                            // Focused action detected (click, type, etc.)
                             rigRef.current.set_target_zoom(1.8);
+                        } else if (isScrolling || velocity > 100) {
+                            // Scrolling or fast movement - zoom out for overview
+                            rigRef.current.set_target_zoom(1.0);
                         }
                     }
                 } else if (motionContextRef.current) {
