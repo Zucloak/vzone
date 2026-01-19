@@ -21,6 +21,12 @@ pub fn init_hooks() {
     console_error_panic_hook::set_once();
 }
 
+// Physics constants for smooth camera movement
+// Higher stiffness = faster response, critical damping = no overshoot
+const CAMERA_STIFFNESS: f64 = 80.0;
+const CAMERA_DAMPING: f64 = 17.89; // Critical damping: 2 * sqrt(CAMERA_STIFFNESS)
+const CAMERA_MASS: f64 = 1.0;
+
 #[wasm_bindgen]
 pub struct CameraRig {
     x: f64,
@@ -47,9 +53,9 @@ impl CameraRig {
             vy: 0.0,
             zoom_level: 1.0,
             target_zoom: 1.0,
-            stiffness: 80.0,  // Increased for faster response
-            damping: 17.89,   // Critically Damped: 2 * sqrt(stiffness) = 2 * sqrt(80) ≈ 17.89
-            mass: 1.0,
+            stiffness: CAMERA_STIFFNESS,
+            damping: CAMERA_DAMPING,
+            mass: CAMERA_MASS,
             src_width,
             src_height,
         }

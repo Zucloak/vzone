@@ -7,6 +7,8 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [package.metadata.wasm-pack.profile.release]
+# Disable wasm-opt to avoid build failures in restricted network environments
+# The Vite bundler will handle optimization during the frontend build step
 wasm-opt = false
 
 [dependencies]

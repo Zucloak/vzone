@@ -2,6 +2,26 @@ import type { BackgroundConfig } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
 
+// Motion detection configuration (tuned for 64x36 analysis buffer)
+const MOTION_CONFIG = {
+    // Pixel change detection
+    THRESHOLD: 12,              // RGB diff threshold (lower = more sensitive)
+    MIN_MASS: 3,                // Minimum changed pixels to register motion
+    
+    // Scroll detection (dimensions in analysis buffer coordinate space)
+    SCROLL_HEIGHT_THRESHOLD: 15, // Height change indicating scroll (out of 36 pixels)
+    SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
+    LOCALIZED_ACTION_AREA: 300,  // Max area for click/type actions (pixels²)
+    
+    // Zoom triggers
+    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom
+    ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
+    ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
+} as const;
+
+// Encoder timing constants
+const ENCODER_SETTLE_DELAY_MS = 100; // Delay to allow pending frames to complete
+
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isReady, setIsReady] = useState(false);
@@ -77,7 +97,6 @@ export const useRecorder = () => {
             // Give a brief moment for any pending frame encoding to complete
             // This prevents race conditions where frames are still being encoded
             // when we try to flush/close the encoder
-            const ENCODER_SETTLE_DELAY_MS = 100;
             await new Promise(resolve => setTimeout(resolve, ENCODER_SETTLE_DELAY_MS));
 
             // Flush and Close Encoder with improved error handling
@@ -247,16 +266,6 @@ export const useRecorder = () => {
                 }
 
                 // --- Motion Detection Logic ---
-                // Motion detection constants (tuned for 64x36 analysis buffer)
-                const MOTION_THRESHOLD = 12;        // RGB diff threshold (lower = more sensitive)
-                const MIN_MOTION_MASS = 3;          // Minimum changed pixels to register motion
-                const SCROLL_HEIGHT_THRESHOLD = 15; // Height change indicating scroll (out of 36 pixels)
-                const SCROLL_WIDTH_THRESHOLD = 40;  // Width change indicating scroll (out of 64 pixels)
-                const LOCALIZED_ACTION_AREA = 300;  // Max area for click/type actions (pixels²)
-                const ZOOM_MIN_MASS = 8;            // Minimum mass to trigger zoom
-                const ZOOM_MAX_VELOCITY = 80;       // Max velocity for zoom-in (pixels/frame)
-                const ZOOM_OUT_VELOCITY = 100;      // Velocity threshold for zoom-out
-
                 let detectedX = currentTargetRef.current.x;
                 let detectedY = currentTargetRef.current.y;
 
@@ -282,7 +291,7 @@ export const useRecorder = () => {
                         const bDiff = Math.abs(frameData[i + 2] - prevData[i + 2]);
 
                         // Check if pixel changed significantly
-                        if (rDiff + gDiff + bDiff > MOTION_THRESHOLD) {
+                        if (rDiff + gDiff + bDiff > MOTION_CONFIG.THRESHOLD) {
                             const pixelIdx = i / 4;
                             const x = pixelIdx % 64;
                             const y = Math.floor(pixelIdx / 64);
@@ -303,7 +312,7 @@ export const useRecorder = () => {
                     prevFrameDataRef.current.set(frameData);
 
                     // If enough pixels changed, update target
-                    if (totalMass > MIN_MOTION_MASS) {
+                    if (totalMass > MOTION_CONFIG.MIN_MASS) {
                         // Scale back up to Source Dimensions
                         const avgX = (totalX / totalMass) * (width / 64);
                         const avgY = (totalY / totalMass) * (height / 36);
@@ -332,15 +341,17 @@ export const useRecorder = () => {
                         
                         // Scrolling typically affects large areas
                         // Clicking/typing affects smaller, more localized areas
-                        const isScrolling = heightChange > SCROLL_HEIGHT_THRESHOLD || widthChange > SCROLL_WIDTH_THRESHOLD;
-                        const isLocalizedAction = changeArea < LOCALIZED_ACTION_AREA && !isScrolling;
+                        const isScrolling = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD || 
+                                          widthChange > MOTION_CONFIG.SCROLL_WIDTH_THRESHOLD;
+                        const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && !isScrolling;
 
                         // Smart Autozoom: Zoom in for clicks, typing, and focused actions
                         // Zoom out for scrolling and large movements
-                        if (isLocalizedAction && totalMass > ZOOM_MIN_MASS && velocity < ZOOM_MAX_VELOCITY) {
+                        if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS && 
+                            velocity < MOTION_CONFIG.ZOOM_MAX_VELOCITY) {
                             // Focused action detected (click, type, etc.)
                             rigRef.current.set_target_zoom(1.8);
-                        } else if (isScrolling || velocity > ZOOM_OUT_VELOCITY) {
+                        } else if (isScrolling || velocity > MOTION_CONFIG.ZOOM_OUT_VELOCITY) {
                             // Scrolling or fast movement - zoom out for overview
                             rigRef.current.set_target_zoom(1.0);
                         }
