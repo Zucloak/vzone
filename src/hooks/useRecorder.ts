@@ -18,6 +18,10 @@ const ZOOM_INTENSITY_DIVISOR = 100; // Divisor for motion mass calculation
 const MOTION_MASS_MINOR_THRESHOLD = 2; // Threshold for minor motion
 const MOTION_MASS_MAJOR_THRESHOLD = 5; // Threshold for major motion
 
+// Default video dimensions (1080p)
+const DEFAULT_VIDEO_WIDTH = 1920;
+const DEFAULT_VIDEO_HEIGHT = 1080;
+
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isReady, setIsReady] = useState(false);
@@ -31,7 +35,7 @@ export const useRecorder = () => {
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
     const startTimeRef = useRef<number>(0);
-    const videoDimensionsRef = useRef({ width: 1920, height: 1080 }); // Store video dimensions
+    const videoDimensionsRef = useRef({ width: DEFAULT_VIDEO_WIDTH, height: DEFAULT_VIDEO_HEIGHT });
 
     // Background State
     const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>({ type: 'solid', color: '#171717' });
@@ -41,7 +45,7 @@ export const useRecorder = () => {
     const motionContextRef = useRef<CanvasRenderingContext2D | null>(null);
     const prevFrameDataRef = useRef<Uint8ClampedArray | null>(null);
     const lastMotionTimeRef = useRef<number>(0);
-    const currentTargetRef = useRef({ x: 960, y: 540 }); // Smooth target tracking
+    const currentTargetRef = useRef({ x: DEFAULT_VIDEO_WIDTH / 2, y: DEFAULT_VIDEO_HEIGHT / 2 });
     const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {

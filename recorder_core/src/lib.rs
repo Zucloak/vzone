@@ -45,6 +45,10 @@ const MAX_ZOOM: f64 = 2.5;
 const ZOOM_SPRING_CONSTANT: f64 = 12.0;
 const ZOOM_DAMPING_FACTOR: f64 = 3.0;
 
+// Canvas output dimensions (standard 1080p)
+const CANVAS_WIDTH: f64 = 1920.0;
+const CANVAS_HEIGHT: f64 = 1080.0;
+
 #[wasm_bindgen]
 impl CameraRig {
     #[wasm_bindgen(constructor)]
@@ -62,8 +66,8 @@ impl CameraRig {
             mass: 1.0,
             src_width,
             src_height,
-            canvas_width: 1920.0,
-            canvas_height: 1080.0,
+            canvas_width: CANVAS_WIDTH,
+            canvas_height: CANVAS_HEIGHT,
         }
     }
 
@@ -79,10 +83,11 @@ impl CameraRig {
         let visible_height = self.canvas_height / self.zoom_level;
         
         // Calculate bounds to prevent showing area outside source video
-        let min_x = visible_width / 2.0;
-        let max_x = self.src_width - visible_width / 2.0;
-        let min_y = visible_height / 2.0;
-        let max_y = self.src_height - visible_height / 2.0;
+        // Handle case where visible area might be larger than source (at low zoom)
+        let min_x = (visible_width / 2.0).min(self.src_width / 2.0);
+        let max_x = (self.src_width - visible_width / 2.0).max(self.src_width / 2.0);
+        let min_y = (visible_height / 2.0).min(self.src_height / 2.0);
+        let max_y = (self.src_height - visible_height / 2.0).max(self.src_height / 2.0);
         
         // Constrain target position
         let constrained_target_x = target_x.max(min_x).min(max_x);
