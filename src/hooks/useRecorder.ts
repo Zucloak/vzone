@@ -24,7 +24,7 @@ const MOTION_CONFIG = {
 } as const;
 
 // Encoder timing constants
-const ENCODER_SETTLE_DELAY_MS = 200; // Delay to allow pending frames to complete encoding
+const ENCODER_SETTLE_DELAY_MS = 300; // Delay to allow pending frames to complete encoding
 
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
@@ -84,6 +84,8 @@ export const useRecorder = () => {
         // Prevent double entry
         if (!isProcessorActiveRef.current) return;
         isProcessorActiveRef.current = false;
+        
+        console.log("🛑 stopRecording called - stopping worker and frame generation");
 
         try {
             // Stop Worker Loop first to prevent new frames
@@ -101,6 +103,7 @@ export const useRecorder = () => {
             // Give time for any pending frame encoding to complete
             // This prevents race conditions where frames are still being encoded
             // when we try to flush/close the encoder
+            console.log(`⏳ Waiting ${ENCODER_SETTLE_DELAY_MS}ms for in-flight frames to complete...`);
             await new Promise(resolve => setTimeout(resolve, ENCODER_SETTLE_DELAY_MS));
 
             // Flush and Close Encoder with improved error handling
@@ -218,6 +221,9 @@ export const useRecorder = () => {
             // Initialize VideoEncoder
             const encoder = new VideoEncoder({
                 output: (chunk, metadata) => {
+                    // Only process output if we're still actively recording
+                    if (!isProcessorActiveRef.current) return;
+                    
                     // Lazy init Muxer once we have the codec config (SPS/PPS)
                     if (!muxerRef.current && metadata?.decoderConfig?.description) {
                         const description = new Uint8Array(metadata.decoderConfig.description as ArrayBuffer);
@@ -241,7 +247,12 @@ export const useRecorder = () => {
                         );
                     }
                 },
-                error: (e) => console.error(e),
+                error: (e) => {
+                    console.error("VideoEncoder error:", e);
+                    // Stop processing immediately on encoder error to prevent cascade failures
+                    isProcessorActiveRef.current = false;
+                    workerRef.current?.postMessage('stop');
+                },
             });
 
             encoder.configure({
@@ -439,13 +450,16 @@ export const useRecorder = () => {
                     console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 60fps`);
                 }
 
-                if (encoder.state === "configured") {
+                // Only encode if we're still actively recording and encoder is ready
+                if (isProcessorActiveRef.current && encoder.state === "configured") {
                     try {
                         const frame = new VideoFrame(canvasRef.current, { timestamp });
                         encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
                         frame.close();
                     } catch (e) {
                          console.error("Frame encoding error:", e);
+                         // Stop on encoding error to prevent cascade
+                         isProcessorActiveRef.current = false;
                     }
                 }
 
