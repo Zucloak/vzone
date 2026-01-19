@@ -344,11 +344,6 @@ export const useRecorder = () => {
                         currentTargetRef.current.x = detectedX;
                         currentTargetRef.current.y = detectedY;
 
-                        // Calculate velocity of the detected centroid
-                        const dx = detectedX - prevDetectedTargetRef.current.x;
-                        const dy = detectedY - prevDetectedTargetRef.current.y;
-                        const velocity = Math.sqrt(dx * dx + dy * dy);
-
                         // Update history
                         prevDetectedTargetRef.current.x = detectedX;
                         prevDetectedTargetRef.current.y = detectedY;
