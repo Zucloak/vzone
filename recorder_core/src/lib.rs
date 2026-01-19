@@ -48,7 +48,7 @@ impl CameraRig {
             zoom_level: 1.0,
             target_zoom: 1.0,
             stiffness: 80.0,  // Increased for faster response
-            damping: 17.9,    // Critically Damped for stiffness 80 (sqrt(80)*2)
+            damping: 17.89,   // Critically Damped: 2 * sqrt(stiffness) = 2 * sqrt(80) ≈ 17.89
             mass: 1.0,
             src_width,
             src_height,
