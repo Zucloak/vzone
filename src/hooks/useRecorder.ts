@@ -222,47 +222,59 @@ export const useRecorder = () => {
                     let totalX = 0;
                     let totalY = 0;
                     let totalMass = 0;
-                    const threshold = 15; // Sensitivity (Lower is more sensitive)
+                    let maxIntensity = 0;
+                    const threshold = 10; // Lower threshold for better sensitivity to clicks/typing
 
                     for (let i = 0; i < frameData.length; i += 4) {
-                        // Simple luminosity diff
+                        // Weighted luminosity calculation for better accuracy
                         const rDiff = Math.abs(frameData[i] - prevData[i]);
                         const gDiff = Math.abs(frameData[i + 1] - prevData[i + 1]);
                         const bDiff = Math.abs(frameData[i + 2] - prevData[i + 2]);
+                        const diff = rDiff + gDiff + bDiff;
 
                         // Check if pixel changed significantly
-                        if (rDiff + gDiff + bDiff > threshold) {
+                        if (diff > threshold) {
                             const pixelIdx = i / 4;
                             const x = pixelIdx % 64;
                             const y = Math.floor(pixelIdx / 64);
 
-                            totalX += x;
-                            totalY += y;
-                            totalMass++;
+                            // Weight by intensity for more accurate centroid
+                            const weight = diff / 255;
+                            totalX += x * weight;
+                            totalY += y * weight;
+                            totalMass += weight;
+                            maxIntensity = Math.max(maxIntensity, diff);
                         }
                     }
 
                     // Save current frame for next loop
                     prevFrameDataRef.current.set(frameData);
 
-                    // If enough pixels changed, update target
-                    if (totalMass > 5) { // Minimum blob size
-                        // Scale back up to 1920x1080
-                        const avgX = (totalX / totalMass) * (1920 / 64);
-                        const avgY = (totalY / totalMass) * (1080 / 36);
+                    // If enough motion detected, update target
+                    if (totalMass > 3) { // Lower threshold for clicks
+                        // Scale back up to source dimensions (1920x1080)
+                        const avgX = (totalX / totalMass) * (width / 64);
+                        const avgY = (totalY / totalMass) * (height / 36);
 
                         detectedX = avgX;
                         detectedY = avgY;
                         lastMotionTimeRef.current = Date.now();
 
-                        // Faster target acquisition, physics handles smoothing
-                        currentTargetRef.current.x = detectedX;
-                        currentTargetRef.current.y = detectedY;
+                        // Smooth tracking with momentum
+                        const smoothing = 0.3; // Adjust for responsiveness
+                        currentTargetRef.current.x += (detectedX - currentTargetRef.current.x) * smoothing;
+                        currentTargetRef.current.y += (detectedY - currentTargetRef.current.y) * smoothing;
                     }
 
-                    // Smart Autozoom: Lower threshold to catch small movements/clicks
-                    if (totalMass > 12) {
-                        rigRef.current.set_target_zoom(1.8);
+                    // Adaptive zoom based on motion intensity
+                    // More motion = more zoom for better focus
+                    if (totalMass > 5) {
+                        // Gradual zoom in based on activity level
+                        const zoomLevel = Math.min(2.2, 1.0 + (totalMass / 100) * 1.5);
+                        rigRef.current.set_target_zoom(zoomLevel);
+                    } else if (totalMass > 2) {
+                        // Slight zoom for small movements (clicks, cursor)
+                        rigRef.current.set_target_zoom(1.5);
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
@@ -273,12 +285,14 @@ export const useRecorder = () => {
 
                 const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
 
-                if (timeSinceMotion > 2000) { // 2s idle
-                    // Zoom OUT
+                if (timeSinceMotion > 1500) { // 1.5s idle - faster response
+                    // Smooth zoom out
                     rigRef.current.set_target_zoom(1.0);
-                    // Drift back to center slowly
-                    currentTargetRef.current.x += (960 - currentTargetRef.current.x) * 0.05;
-                    currentTargetRef.current.y += (540 - currentTargetRef.current.y) * 0.05;
+                    // Gentle drift back to center
+                    const centerX = width / 2;
+                    const centerY = height / 2;
+                    currentTargetRef.current.x += (centerX - currentTargetRef.current.x) * 0.02;
+                    currentTargetRef.current.y += (centerY - currentTargetRef.current.y) * 0.02;
                 }
 
                 // Use Motion Target for Physics

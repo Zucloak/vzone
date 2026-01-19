@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
-use std::io::{Cursor, Write};
+use std::io::Cursor;
 
 #[wasm_bindgen]
 extern "C" {
@@ -29,11 +29,14 @@ pub struct CameraRig {
     vy: f64,
     zoom_level: f64,
     target_zoom: f64,
+    zoom_velocity: f64,
     stiffness: f64,
     damping: f64,
     mass: f64,
     src_width: f64,
     src_height: f64,
+    canvas_width: f64,
+    canvas_height: f64,
 }
 
 #[wasm_bindgen]
@@ -47,22 +50,41 @@ impl CameraRig {
             vy: 0.0,
             zoom_level: 1.0,
             target_zoom: 1.0,
-            stiffness: 180.0, // Snappier
-            damping: 22.0,   // More controlled
+            zoom_velocity: 0.0,
+            stiffness: 300.0, // Higher for more responsive tracking
+            damping: 30.0,    // Higher to prevent overshoot
             mass: 1.0,
             src_width,
             src_height,
+            canvas_width: 1920.0,
+            canvas_height: 1080.0,
         }
     }
 
     pub fn set_target_zoom(&mut self, zoom: f64) {
-        self.target_zoom = zoom.max(1.0);
+        // Limit zoom to 2.5x to keep content within bounds
+        self.target_zoom = zoom.max(1.0).min(2.5);
     }
 
     pub fn update(&mut self, target_x: f64, target_y: f64, dt: f64) {
-        // Apply physics to x,y core
-        let dist_x = target_x - self.x;
-        let dist_y = target_y - self.y;
+        // Constrain target to valid bounds based on current zoom
+        // Calculate the visible area at current zoom
+        let visible_width = self.canvas_width / self.zoom_level;
+        let visible_height = self.canvas_height / self.zoom_level;
+        
+        // Calculate bounds to prevent showing area outside source video
+        let min_x = visible_width / 2.0;
+        let max_x = self.src_width - visible_width / 2.0;
+        let min_y = visible_height / 2.0;
+        let max_y = self.src_height - visible_height / 2.0;
+        
+        // Constrain target position
+        let constrained_target_x = target_x.max(min_x).min(max_x);
+        let constrained_target_y = target_y.max(min_y).min(max_y);
+        
+        // Apply physics to x,y position with spring-damper system
+        let dist_x = constrained_target_x - self.x;
+        let dist_y = constrained_target_y - self.y;
         
         let force_x = self.stiffness * dist_x;
         let force_y = self.stiffness * dist_y;
@@ -75,10 +97,19 @@ impl CameraRig {
 
         self.x += self.vx * dt;
         self.y += self.vy * dt;
+        
+        // Constrain final position after physics update
+        self.x = self.x.max(min_x).min(max_x);
+        self.y = self.y.max(min_y).min(max_y);
 
-        // Smooth zoom
+        // Smooth zoom with physics-based interpolation for buttery smooth transitions
         let zoom_diff = self.target_zoom - self.zoom_level;
-        self.zoom_level += zoom_diff * 4.0 * dt; 
+        let zoom_accel = zoom_diff * 12.0 - self.zoom_velocity * 3.0; // Spring-damper for zoom
+        self.zoom_velocity += zoom_accel * dt;
+        self.zoom_level += self.zoom_velocity * dt;
+        
+        // Clamp zoom to prevent overshooting
+        self.zoom_level = self.zoom_level.max(1.0).min(2.5);
     }
 
     pub fn get_view_rect(&self) -> JsValue {
