@@ -358,22 +358,24 @@ export const useRecorder = () => {
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
                         
-                        // Scrolling typically affects large areas
+                        // Scrolling typically affects large areas continuously
                         // Clicking/typing affects smaller, more localized areas
                         const isScrolling = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD || 
                                           widthChange > MOTION_CONFIG.SCROLL_WIDTH_THRESHOLD;
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && !isScrolling;
 
                         // Smart Autozoom: Zoom in for clicks, typing, and focused actions
-                        // Zoom out for scrolling and large movements
-                        if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS && 
-                            velocity < MOTION_CONFIG.ZOOM_MAX_VELOCITY) {
-                            // Focused action detected (click, type, etc.)
+                        // Only zoom out for actual scrolling (large area changes), NOT just high velocity
+                        // This allows smooth panning between clicks while staying zoomed in
+                        if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS) {
+                            // Focused action detected (click, type, etc.) - stay zoomed in
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
-                        } else if (isScrolling || velocity > MOTION_CONFIG.ZOOM_OUT_VELOCITY) {
-                            // Scrolling or fast movement - zoom out for overview
+                        } else if (isScrolling) {
+                            // Scrolling detected (large area change) - zoom out for overview
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                         }
+                        // For high velocity without scrolling indicators, do nothing - 
+                        // let camera pan smoothly while maintaining current zoom level
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
