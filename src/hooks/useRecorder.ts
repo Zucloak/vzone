@@ -52,6 +52,7 @@ export const useRecorder = () => {
     const prevDetectedTargetRef = useRef({ x: 960, y: 540 }); // For velocity calc
     const workerRef = useRef<Worker | null>(null);
     const isProcessorActiveRef = useRef(false);
+    const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
     useEffect(() => {
         // Init Wasm
@@ -271,10 +272,25 @@ export const useRecorder = () => {
             const video = document.createElement('video');
             video.srcObject = displayMedia;
             video.muted = true; // Important for autoplay
+            videoElementRef.current = video;
+            
+            // Add video error handler
+            video.onerror = (e) => {
+                console.error("Video element error:", e);
+                isProcessorActiveRef.current = false;
+                workerRef.current?.postMessage('stop');
+            };
+            
             video.play();
 
             const draw = () => {
                 if (!isProcessorActiveRef.current) return;
+                
+                // Check if video is still valid and has data
+                if (!video || video.readyState < 2) {
+                    console.warn("Video not ready, skipping frame");
+                    return;
+                }
 
                 if (frameCountRef.current % 60 === 0) {
                     console.log(`🎨 draw() called for frame ${frameCountRef.current}`);
@@ -450,10 +466,14 @@ export const useRecorder = () => {
                     console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 60fps`);
                 }
 
-                // Only encode if we're still actively recording and encoder is ready
-                if (isProcessorActiveRef.current && encoder.state === "configured") {
+                // Only encode if we're still actively recording, encoder is ready, and video track is active
+                const videoTrack = displayMedia.getVideoTracks()[0];
+                if (isProcessorActiveRef.current && 
+                    encoder.state === "configured" && 
+                    videoTrack && 
+                    videoTrack.readyState === 'live') {
                     try {
-                        const frame = new VideoFrame(canvasRef.current, { timestamp });
+                        const frame = new VideoFrame(canvasRef.current!, { timestamp });
                         encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
                         frame.close();
                     } catch (e) {
@@ -461,6 +481,9 @@ export const useRecorder = () => {
                          // Stop on encoding error to prevent cascade
                          isProcessorActiveRef.current = false;
                     }
+                } else if (videoTrack && videoTrack.readyState !== 'live') {
+                    console.warn("Video track no longer live, stopping frame generation");
+                    isProcessorActiveRef.current = false;
                 }
 
                 frameCountRef.current++;
@@ -495,8 +518,13 @@ export const useRecorder = () => {
                 }
             };
 
-            // Stop handler
+            // Stop handler - when track ends (user clicks "Stop Sharing")
             track.onended = () => {
+                console.log("📹 Video track ended - stopping recording");
+                // Immediately stop frame generation when track ends
+                isProcessorActiveRef.current = false;
+                workerRef.current?.postMessage('stop');
+                // Call stopRecording to clean up
                 stopRecording();
             };
 
