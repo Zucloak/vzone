@@ -17,6 +17,10 @@ const MOTION_CONFIG = {
     ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
+    
+    // Zoom levels
+    ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
+    ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
 } as const;
 
 // Encoder timing constants
@@ -350,10 +354,10 @@ export const useRecorder = () => {
                         if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS && 
                             velocity < MOTION_CONFIG.ZOOM_MAX_VELOCITY) {
                             // Focused action detected (click, type, etc.)
-                            rigRef.current.set_target_zoom(1.8);
+                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                         } else if (isScrolling || velocity > MOTION_CONFIG.ZOOM_OUT_VELOCITY) {
                             // Scrolling or fast movement - zoom out for overview
-                            rigRef.current.set_target_zoom(1.0);
+                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                         }
                     }
                 } else if (motionContextRef.current) {
@@ -367,7 +371,7 @@ export const useRecorder = () => {
 
                 if (timeSinceMotion > 2000) { // 2s idle
                     // Zoom OUT
-                    rigRef.current.set_target_zoom(1.0);
+                    rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
                 // Use Motion Target for Physics

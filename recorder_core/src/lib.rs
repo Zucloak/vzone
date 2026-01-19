@@ -24,8 +24,13 @@ pub fn init_hooks() {
 // Physics constants for smooth camera movement
 // Higher stiffness = faster response, critical damping = no overshoot
 const CAMERA_STIFFNESS: f64 = 80.0;
-const CAMERA_DAMPING: f64 = 17.89; // Critical damping: 2 * sqrt(CAMERA_STIFFNESS)
+const CAMERA_DAMPING: f64 = 2.0 * 8.944; // Critical damping: 2 * sqrt(CAMERA_STIFFNESS)
 const CAMERA_MASS: f64 = 1.0;
+
+// Zoom constraints
+const MIN_ZOOM: f64 = 1.0;  // 1.0 = no zoom (full view)
+const MAX_ZOOM: f64 = 2.5;  // 2.5 = maximum zoom in
+const ZOOM_TRANSITION_SPEED: f64 = 5.0; // Multiplier for zoom speed
 
 #[wasm_bindgen]
 pub struct CameraRig {
@@ -62,16 +67,16 @@ impl CameraRig {
     }
 
     pub fn set_target_zoom(&mut self, zoom: f64) {
-        self.target_zoom = zoom.max(1.0);
+        self.target_zoom = zoom.max(MIN_ZOOM);
     }
 
     pub fn update(&mut self, target_x: f64, target_y: f64, dt: f64) {
         // Smooth zoom first to know our constraints
         let zoom_diff = self.target_zoom - self.zoom_level;
-        self.zoom_level += zoom_diff * 5.0 * dt; // Faster, smoother zoom transition
+        self.zoom_level += zoom_diff * ZOOM_TRANSITION_SPEED * dt;
         
-        // Clamp zoom to safe range (1.0 = no zoom, 2.0 = 2x zoom)
-        self.zoom_level = self.zoom_level.clamp(1.0, 2.5);
+        // Clamp zoom to safe range
+        self.zoom_level = self.zoom_level.clamp(MIN_ZOOM, MAX_ZOOM);
 
         // Calculate view dimensions at current zoom
         // When zoomed in, we see less of the source video
