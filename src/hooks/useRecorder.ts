@@ -290,7 +290,13 @@ export const useRecorder = () => {
                     }
 
                     // Adaptive zoom based on motion intensity
-                    // More motion = more zoom for better focus
+                    // 
+                    // Zoom calculation: base(1.0) + (totalMass / 100) * 1.5, capped at 2.2
+                    // - totalMass represents weighted pixel changes (0-1000+ range)
+                    // - Small motion (2-5): 1.5x zoom for clicks/minor cursor movement
+                    // - Medium motion (5-20): 1.0 + (10/100)*1.5 = 1.15x zoom
+                    // - Large motion (20-80): 1.0 + (50/100)*1.5 = 1.75x zoom for active typing
+                    // - Very large motion (80+): capped at 2.2x for intensive activity
                     if (totalMass > MOTION_MASS_MAJOR_THRESHOLD) {
                         // Gradual zoom in based on activity level
                         const zoomLevel = Math.min(ZOOM_MAJOR_MOTION, 1.0 + (totalMass / ZOOM_INTENSITY_DIVISOR) * ZOOM_INTENSITY_SCALE);

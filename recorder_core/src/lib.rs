@@ -83,13 +83,21 @@ impl CameraRig {
         let visible_height = self.canvas_height / self.zoom_level;
         
         // Calculate bounds to prevent showing area outside source video
-        // Handle case where visible area might be larger than source (at low zoom)
+        // 
+        // Edge case handling: When visible area > source (zoom < 1.0 or small source):
+        // - If visible_width > src_width, camera must stay at center (src_width / 2)
+        // - Otherwise, camera can move within (visible_width/2) to (src_width - visible_width/2)
+        // 
+        // Example: 1920x1080 canvas, 800x600 source at 1.0x zoom
+        // - visible_width (1920) > src_width (800)
+        // - min_x = min(960, 400) = 400, max_x = max(-560, 400) = 400
+        // - Result: camera locked to center (400, 300) to avoid black borders
         let min_x = (visible_width / 2.0).min(self.src_width / 2.0);
         let max_x = (self.src_width - visible_width / 2.0).max(self.src_width / 2.0);
         let min_y = (visible_height / 2.0).min(self.src_height / 2.0);
         let max_y = (self.src_height - visible_height / 2.0).max(self.src_height / 2.0);
         
-        // Constrain target position
+        // Constrain target position to valid bounds
         let constrained_target_x = target_x.max(min_x).min(max_x);
         let constrained_target_y = target_y.max(min_y).min(max_y);
         
