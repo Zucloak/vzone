@@ -2,6 +2,22 @@ import type { BackgroundConfig } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
 
+// Motion detection and zoom constants
+const MOTION_THRESHOLD = 10; // Lower = more sensitive
+const MIN_MOTION_MASS = 3; // Minimum for click detection
+const MOTION_SMOOTHING = 0.3; // Target tracking smoothing factor
+const MAX_RGB_VALUE = 255; // Maximum RGB color value
+const IDLE_TIMEOUT_MS = 1500; // Time before zoom out
+const CENTER_DRIFT_FACTOR = 0.02; // Gentle center drift speed
+
+// Zoom level constants
+const ZOOM_MINOR_MOTION = 1.5; // Zoom for clicks/small movements
+const ZOOM_MAJOR_MOTION = 2.2; // Max zoom for typing/large movements
+const ZOOM_INTENSITY_SCALE = 1.5; // Multiplier for motion-based zoom
+const ZOOM_INTENSITY_DIVISOR = 100; // Divisor for motion mass calculation
+const MOTION_MASS_MINOR_THRESHOLD = 2; // Threshold for minor motion
+const MOTION_MASS_MAJOR_THRESHOLD = 5; // Threshold for major motion
+
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isReady, setIsReady] = useState(false);
@@ -227,7 +243,6 @@ export const useRecorder = () => {
                     let totalY = 0;
                     let totalMass = 0;
                     let maxIntensity = 0;
-                    const threshold = 10; // Lower threshold for better sensitivity to clicks/typing
 
                     for (let i = 0; i < frameData.length; i += 4) {
                         // Weighted luminosity calculation for better accuracy
@@ -237,13 +252,13 @@ export const useRecorder = () => {
                         const diff = rDiff + gDiff + bDiff;
 
                         // Check if pixel changed significantly
-                        if (diff > threshold) {
+                        if (diff > MOTION_THRESHOLD) {
                             const pixelIdx = i / 4;
                             const x = pixelIdx % 64;
                             const y = Math.floor(pixelIdx / 64);
 
                             // Weight by intensity for more accurate centroid
-                            const weight = diff / 255;
+                            const weight = diff / MAX_RGB_VALUE;
                             totalX += x * weight;
                             totalY += y * weight;
                             totalMass += weight;
@@ -255,7 +270,7 @@ export const useRecorder = () => {
                     prevFrameDataRef.current.set(frameData);
 
                     // If enough motion detected, update target
-                    if (totalMass > 3) { // Lower threshold for clicks
+                    if (totalMass > MIN_MOTION_MASS) {
                         // Scale back up to source dimensions
                         const { width, height } = videoDimensionsRef.current;
                         const avgX = (totalX / totalMass) * (width / 64);
@@ -266,20 +281,19 @@ export const useRecorder = () => {
                         lastMotionTimeRef.current = Date.now();
 
                         // Smooth tracking with momentum
-                        const smoothing = 0.3; // Adjust for responsiveness
-                        currentTargetRef.current.x += (detectedX - currentTargetRef.current.x) * smoothing;
-                        currentTargetRef.current.y += (detectedY - currentTargetRef.current.y) * smoothing;
+                        currentTargetRef.current.x += (detectedX - currentTargetRef.current.x) * MOTION_SMOOTHING;
+                        currentTargetRef.current.y += (detectedY - currentTargetRef.current.y) * MOTION_SMOOTHING;
                     }
 
                     // Adaptive zoom based on motion intensity
                     // More motion = more zoom for better focus
-                    if (totalMass > 5) {
+                    if (totalMass > MOTION_MASS_MAJOR_THRESHOLD) {
                         // Gradual zoom in based on activity level
-                        const zoomLevel = Math.min(2.2, 1.0 + (totalMass / 100) * 1.5);
+                        const zoomLevel = Math.min(ZOOM_MAJOR_MOTION, 1.0 + (totalMass / ZOOM_INTENSITY_DIVISOR) * ZOOM_INTENSITY_SCALE);
                         rigRef.current.set_target_zoom(zoomLevel);
-                    } else if (totalMass > 2) {
+                    } else if (totalMass > MOTION_MASS_MINOR_THRESHOLD) {
                         // Slight zoom for small movements (clicks, cursor)
-                        rigRef.current.set_target_zoom(1.5);
+                        rigRef.current.set_target_zoom(ZOOM_MINOR_MOTION);
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
@@ -290,15 +304,15 @@ export const useRecorder = () => {
 
                 const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
 
-                if (timeSinceMotion > 1500) { // 1.5s idle - faster response
+                if (timeSinceMotion > IDLE_TIMEOUT_MS) {
                     // Smooth zoom out
                     rigRef.current.set_target_zoom(1.0);
                     // Gentle drift back to center
                     const { width, height } = videoDimensionsRef.current;
                     const centerX = width / 2;
                     const centerY = height / 2;
-                    currentTargetRef.current.x += (centerX - currentTargetRef.current.x) * 0.02;
-                    currentTargetRef.current.y += (centerY - currentTargetRef.current.y) * 0.02;
+                    currentTargetRef.current.x += (centerX - currentTargetRef.current.x) * CENTER_DRIFT_FACTOR;
+                    currentTargetRef.current.y += (centerY - currentTargetRef.current.y) * CENTER_DRIFT_FACTOR;
                 }
 
                 // Use Motion Target for Physics
