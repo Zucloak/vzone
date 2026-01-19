@@ -24,7 +24,7 @@ const MOTION_CONFIG = {
 } as const;
 
 // Encoder timing constants
-const ENCODER_SETTLE_DELAY_MS = 100; // Delay to allow pending frames to complete
+const ENCODER_SETTLE_DELAY_MS = 200; // Delay to allow pending frames to complete encoding
 
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
@@ -98,12 +98,13 @@ export const useRecorder = () => {
             // Bring focus back to this window
             window.focus();
 
-            // Give a brief moment for any pending frame encoding to complete
+            // Give time for any pending frame encoding to complete
             // This prevents race conditions where frames are still being encoded
             // when we try to flush/close the encoder
             await new Promise(resolve => setTimeout(resolve, ENCODER_SETTLE_DELAY_MS));
 
             // Flush and Close Encoder with improved error handling
+            // CRITICAL: Keep canvas and stream alive until encoder is fully closed
             if (videoEncoderRef.current) {
                 try {
                     const encoderState = videoEncoderRef.current.state;
@@ -121,21 +122,21 @@ export const useRecorder = () => {
                     }
                 } catch (e) {
                     console.error(`Encoder cleanup error (non-critical, continuing with cleanup). State was: ${videoEncoderRef.current?.state}`, e);
-                    // Continue with cleanup even if encoder fails
+                    // Force close if still open after error
+                    try {
+                        if (videoEncoderRef.current?.state !== 'closed') {
+                            videoEncoderRef.current?.close();
+                        }
+                    } catch (closeError) {
+                        console.error("Error force-closing encoder:", closeError);
+                    }
                 }
                 videoEncoderRef.current = null;
             }
 
-            // Stop media stream
-            if (stream) {
-                stream.getTracks().forEach(t => t.stop());
-                setStream(null);
-            }
-
-            // Only set recording to false after encoder is fully cleaned up
-            setIsRecording(false);
-
-            // Finalize muxer and create video blob
+            // Finalize muxer BEFORE stopping stream and UI updates
+            // The muxer needs to finish writing before we clean up everything
+            let videoBlob: Blob | null = null;
             if (muxerRef.current) {
                 try {
                     const bytes = muxerRef.current.finish();
@@ -147,10 +148,7 @@ export const useRecorder = () => {
                     }
 
                     // Use video/mp4 for correct format detection
-                    const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
-                    const url = URL.createObjectURL(blob);
-                    console.log("Setting preview URL:", url);
-                    setPreviewBlobUrl(url);
+                    videoBlob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
                 } catch (e) {
                     console.error("Muxer finish failed:", e);
                     alert("Muxer Error on Finish: " + e);
@@ -159,6 +157,23 @@ export const useRecorder = () => {
             } else {
                 console.warn("Muxer was null in stopRecording! No video data.");
                 alert("No video data was recorded. (Muxer not initialized - did recording start?)");
+            }
+
+            // NOW we can safely stop the media stream and update UI
+            // Encoder is fully flushed/closed, muxer is done, frames are complete
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                setStream(null);
+            }
+
+            // Update UI state - this will hide the canvas
+            setIsRecording(false);
+
+            // Set the preview URL if we got a video blob
+            if (videoBlob) {
+                const url = URL.createObjectURL(videoBlob);
+                console.log("Setting preview URL:", url);
+                setPreviewBlobUrl(url);
             }
         } catch (err) {
             console.error("Critical error in stopRecording:", err);
