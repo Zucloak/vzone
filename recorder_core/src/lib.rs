@@ -39,6 +39,12 @@ pub struct CameraRig {
     canvas_height: f64,
 }
 
+// Constants for zoom behavior
+const MIN_ZOOM: f64 = 1.0;
+const MAX_ZOOM: f64 = 2.5;
+const ZOOM_SPRING_CONSTANT: f64 = 12.0;
+const ZOOM_DAMPING_FACTOR: f64 = 3.0;
+
 #[wasm_bindgen]
 impl CameraRig {
     #[wasm_bindgen(constructor)]
@@ -62,8 +68,8 @@ impl CameraRig {
     }
 
     pub fn set_target_zoom(&mut self, zoom: f64) {
-        // Limit zoom to 2.5x to keep content within bounds
-        self.target_zoom = zoom.max(1.0).min(2.5);
+        // Limit zoom to prevent excessive zooming and keep content within bounds
+        self.target_zoom = zoom.max(MIN_ZOOM).min(MAX_ZOOM);
     }
 
     pub fn update(&mut self, target_x: f64, target_y: f64, dt: f64) {
@@ -104,12 +110,12 @@ impl CameraRig {
 
         // Smooth zoom with physics-based interpolation for buttery smooth transitions
         let zoom_diff = self.target_zoom - self.zoom_level;
-        let zoom_accel = zoom_diff * 12.0 - self.zoom_velocity * 3.0; // Spring-damper for zoom
+        let zoom_accel = zoom_diff * ZOOM_SPRING_CONSTANT - self.zoom_velocity * ZOOM_DAMPING_FACTOR;
         self.zoom_velocity += zoom_accel * dt;
         self.zoom_level += self.zoom_velocity * dt;
         
         // Clamp zoom to prevent overshooting
-        self.zoom_level = self.zoom_level.max(1.0).min(2.5);
+        self.zoom_level = self.zoom_level.max(MIN_ZOOM).min(MAX_ZOOM);
     }
 
     pub fn get_view_rect(&self) -> JsValue {

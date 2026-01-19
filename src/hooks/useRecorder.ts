@@ -15,6 +15,7 @@ export const useRecorder = () => {
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
     const startTimeRef = useRef<number>(0);
+    const videoDimensionsRef = useRef({ width: 1920, height: 1080 }); // Store video dimensions
 
     // Background State
     const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>({ type: 'solid', color: '#171717' });
@@ -137,6 +138,9 @@ export const useRecorder = () => {
             const settings = track.getSettings();
             const width = settings.width || 1920;
             const height = settings.height || 1080;
+            
+            // Store dimensions for use in draw function
+            videoDimensionsRef.current = { width, height };
 
             // Initialize Camera Rig
             rigRef.current = new CameraRig(width, height);
@@ -252,7 +256,8 @@ export const useRecorder = () => {
 
                     // If enough motion detected, update target
                     if (totalMass > 3) { // Lower threshold for clicks
-                        // Scale back up to source dimensions (1920x1080)
+                        // Scale back up to source dimensions
+                        const { width, height } = videoDimensionsRef.current;
                         const avgX = (totalX / totalMass) * (width / 64);
                         const avgY = (totalY / totalMass) * (height / 36);
 
@@ -289,6 +294,7 @@ export const useRecorder = () => {
                     // Smooth zoom out
                     rigRef.current.set_target_zoom(1.0);
                     // Gentle drift back to center
+                    const { width, height } = videoDimensionsRef.current;
                     const centerX = width / 2;
                     const centerY = height / 2;
                     currentTargetRef.current.x += (centerX - currentTargetRef.current.x) * 0.02;
