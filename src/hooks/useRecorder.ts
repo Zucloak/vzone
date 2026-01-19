@@ -467,23 +467,25 @@ export const useRecorder = () => {
                 }
 
                 // Only encode if we're still actively recording, encoder is ready, and video track is active
-                const videoTrack = displayMedia.getVideoTracks()[0];
-                if (isProcessorActiveRef.current && 
-                    encoder.state === "configured" && 
-                    videoTrack && 
-                    videoTrack.readyState === 'live') {
-                    try {
-                        const frame = new VideoFrame(canvasRef.current!, { timestamp });
-                        encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
-                        frame.close();
-                    } catch (e) {
-                         console.error("Frame encoding error:", e);
-                         // Stop on encoding error to prevent cascade
-                         isProcessorActiveRef.current = false;
+                if (displayMedia) {
+                    const videoTrack = displayMedia.getVideoTracks()[0];
+                    if (isProcessorActiveRef.current && 
+                        encoder.state === "configured" && 
+                        videoTrack && 
+                        videoTrack.readyState === 'live') {
+                        try {
+                            const frame = new VideoFrame(canvasRef.current!, { timestamp });
+                            encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
+                            frame.close();
+                        } catch (e) {
+                             console.error("Frame encoding error:", e);
+                             // Stop on encoding error to prevent cascade
+                             isProcessorActiveRef.current = false;
+                        }
+                    } else if (videoTrack && videoTrack.readyState !== 'live') {
+                        console.warn("Video track no longer live, stopping frame generation");
+                        isProcessorActiveRef.current = false;
                     }
-                } else if (videoTrack && videoTrack.readyState !== 'live') {
-                    console.warn("Video track no longer live, stopping frame generation");
-                    isProcessorActiveRef.current = false;
                 }
 
                 frameCountRef.current++;
