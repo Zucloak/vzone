@@ -9,12 +9,12 @@ const MOTION_CONFIG = {
     MIN_MASS: 3,                // Minimum changed pixels to register motion
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 12, // Height change indicating scroll (out of 36 pixels) - lowered for better detection
+    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
     SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 400,  // Max area for click/type actions (pixels²) - increased slightly
+    LOCALIZED_ACTION_AREA: 350,  // Max area for click/type actions (pixels²) - tight for precise detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 6,           // Minimum mass to trigger zoom - lowered for more responsive clicks
+    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom - balanced to avoid false positives
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     
@@ -220,6 +220,9 @@ export const useRecorder = () => {
 
             // Initialize Camera Rig with actual dimensions
             rigRef.current = new CameraRig(width, height);
+            
+            // CRITICAL: Initialize zoom to overview level to prevent random startup zooming
+            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
 
             // Set initial target to center of actual screen
             currentTargetRef.current = { x: width / 2, y: height / 2 };
@@ -396,27 +399,29 @@ export const useRecorder = () => {
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
                         
-                        // Scrolling detection: Prioritize vertical movement with large area
-                        // More lenient detection for reliable zoom-out on scroll
+                        // Scrolling detection: VERY lenient for reliable detection
+                        // Even small vertical scrolls should trigger zoom out
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
-                        const hasLargeArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA * 1.5; // 1.5x threshold for better detection
-                        const isScrolling = hasVerticalScroll && hasLargeArea;
+                        const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA; // Just needs to be bigger than click area
+                        const isScrolling = hasVerticalScroll && hasWideArea;
                         
-                        // Localized action: small area with sufficient mass
+                        // Localized action: MUST be small focused area
+                        // This prevents any scroll from being misclassified as a click
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                                  totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                                 !isScrolling;
+                                                 !isScrolling; // Explicitly exclude scrolling
 
-                        // Smart Autozoom with immediate response:
-                        // 1. Scrolling ALWAYS zooms OUT to overview - no exceptions
-                        // 2. Localized actions (clicks, typing) zoom IN immediately
-                        // 3. Light motion maintains current zoom
+                        // Smart Autozoom with clear priority:
+                        // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
+                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions)
+                        // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
                         if (isScrolling) {
-                            // Scrolling detected - immediately zoom OUT to overview for context
+                            // Scrolling detected - ALWAYS zoom OUT to overview for context
+                            // This takes absolute priority over everything else
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                         } else if (isLocalizedAction) {
-                            // Focused action detected (click, type) - immediately zoom in
-                            // Responsive zoom with lower threshold for better UX
+                            // Focused action detected (click, type) - zoom in
+                            // Only triggers if NOT scrolling
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                         }
                         // For light motion (panning, slight hover), maintain current zoom level
