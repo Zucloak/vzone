@@ -2,6 +2,30 @@ import type { BackgroundConfig } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
 
+// Motion detection configuration (tuned for 64x36 analysis buffer)
+const MOTION_CONFIG = {
+    // Pixel change detection
+    THRESHOLD: 12,              // RGB diff threshold (lower = more sensitive)
+    MIN_MASS: 3,                // Minimum changed pixels to register motion
+    
+    // Scroll detection (dimensions in analysis buffer coordinate space)
+    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
+    SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
+    LOCALIZED_ACTION_AREA: 350,  // Max area for click/type actions (pixels²) - tight for precise detection
+    
+    // Zoom triggers
+    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom - balanced to avoid false positives
+    ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
+    ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
+    
+    // Zoom levels
+    ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
+    ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
+} as const;
+
+// Encoder timing constants
+const ENCODER_SETTLE_DELAY_MS = 300; // Delay to allow pending frames to complete encoding
+
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isReady, setIsReady] = useState(false);
@@ -28,6 +52,8 @@ export const useRecorder = () => {
     const prevDetectedTargetRef = useRef({ x: 960, y: 540 }); // For velocity calc
     const workerRef = useRef<Worker | null>(null);
     const isProcessorActiveRef = useRef(false);
+    const isStoppingRef = useRef(false);
+    const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
     useEffect(() => {
         // Init Wasm
@@ -57,12 +83,16 @@ export const useRecorder = () => {
     }, []);
 
     const stopRecording = useCallback(async () => {
-        // Prevent double entry
-        if (!isProcessorActiveRef.current) return;
+        // Prevent double entry with a dedicated flag
+        if (isStoppingRef.current) return;
+        isStoppingRef.current = true;
+        
         isProcessorActiveRef.current = false;
+        
+        console.log("🛑 stopRecording called - stopping worker and frame generation");
 
         try {
-            // Stop Worker Loop
+            // Stop Worker Loop first to prevent new frames
             workerRef.current?.postMessage('stop');
 
             // Clear any lingering interval if it exists (though we use worker now)
@@ -74,28 +104,46 @@ export const useRecorder = () => {
             // Bring focus back to this window
             window.focus();
 
-            // Flush and Close Encoder BEFORE hiding canvas (setIsRecording false)
-            // This prevents "Can't readback frame textures" error
+            // Give time for any pending frame encoding to complete
+            // This prevents race conditions where frames are still being encoded
+            // when we try to flush/close the encoder
+            console.log(`⏳ Waiting ${ENCODER_SETTLE_DELAY_MS}ms for in-flight frames to complete...`);
+            await new Promise(resolve => setTimeout(resolve, ENCODER_SETTLE_DELAY_MS));
+
+            // Flush and Close Encoder with improved error handling
+            // CRITICAL: Keep canvas and stream alive until encoder is fully closed
             if (videoEncoderRef.current) {
-                if ((videoEncoderRef.current.state as string) !== 'closed') {
-                    try {
+                try {
+                    const encoderState = videoEncoderRef.current.state;
+                    console.log("Encoder state before flush:", encoderState);
+                    
+                    if (encoderState === 'configured') {
                         await videoEncoderRef.current.flush();
-                    } catch (e) {
-                        console.error("Encoder flush warning:", e);
+                        console.log("Encoder flushed successfully");
                     }
-                    if ((videoEncoderRef.current.state as string) !== 'closed') {
+                    
+                    // Check state again after flush
+                    if (videoEncoderRef.current.state !== 'closed') {
                         videoEncoderRef.current.close();
+                        console.log("Encoder closed successfully");
+                    }
+                } catch (e) {
+                    console.error(`Encoder cleanup error (non-critical, continuing with cleanup). State was: ${videoEncoderRef.current?.state}`, e);
+                    // Force close if still open after error
+                    try {
+                        if (videoEncoderRef.current?.state !== 'closed') {
+                            videoEncoderRef.current?.close();
+                        }
+                    } catch (closeError) {
+                        console.error("Error force-closing encoder:", closeError);
                     }
                 }
+                videoEncoderRef.current = null;
             }
 
-            setIsRecording(false);
-
-            if (stream) {
-                stream.getTracks().forEach(t => t.stop());
-                setStream(null);
-            }
-
+            // Finalize muxer BEFORE stopping stream and UI updates
+            // The muxer needs to finish writing before we clean up everything
+            let videoBlob: Blob | null = null;
             if (muxerRef.current) {
                 try {
                     const bytes = muxerRef.current.finish();
@@ -107,10 +155,7 @@ export const useRecorder = () => {
                     }
 
                     // Use video/mp4 for correct format detection
-                    const blob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
-                    const url = URL.createObjectURL(blob);
-                    console.log("Setting preview URL:", url);
-                    setPreviewBlobUrl(url);
+                    videoBlob = new Blob([bytes as unknown as BlobPart], { type: 'video/mp4' });
                 } catch (e) {
                     console.error("Muxer finish failed:", e);
                     alert("Muxer Error on Finish: " + e);
@@ -119,6 +164,23 @@ export const useRecorder = () => {
             } else {
                 console.warn("Muxer was null in stopRecording! No video data.");
                 alert("No video data was recorded. (Muxer not initialized - did recording start?)");
+            }
+
+            // NOW we can safely stop the media stream and update UI
+            // Encoder is fully flushed/closed, muxer is done, frames are complete
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                setStream(null);
+            }
+
+            // Update UI state - this will hide the canvas
+            setIsRecording(false);
+
+            // Set the preview URL if we got a video blob
+            if (videoBlob) {
+                const url = URL.createObjectURL(videoBlob);
+                console.log("Setting preview URL:", url);
+                setPreviewBlobUrl(url);
             }
         } catch (err) {
             console.error("Critical error in stopRecording:", err);
@@ -129,11 +191,14 @@ export const useRecorder = () => {
     const startRecording = useCallback(async () => {
         let displayMedia: MediaStream | null = null;
         try {
+            // Reset stopping flag for new recording
+            isStoppingRef.current = false;
+            
             displayMedia = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
-                    frameRate: 60,
+                    frameRate: 30, // 30fps to match encoder settings for smooth recording
                 },
                 audio: {
                     echoCancellation: true,
@@ -155,14 +220,20 @@ export const useRecorder = () => {
 
             // Initialize Camera Rig with actual dimensions
             rigRef.current = new CameraRig(width, height);
+            
+            // CRITICAL: Initialize zoom to overview level to prevent random startup zooming
+            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
 
             // Set initial target to center of actual screen
             currentTargetRef.current = { x: width / 2, y: height / 2 };
             prevDetectedTargetRef.current = { x: width / 2, y: height / 2 };
 
-            // Initialize VideoEncoder
+            // Initialize VideoEncoder with robust configuration for animated content
             const encoder = new VideoEncoder({
                 output: (chunk, metadata) => {
+                    // Only process output if we're still actively recording
+                    if (!isProcessorActiveRef.current) return;
+                    
                     // Lazy init Muxer once we have the codec config (SPS/PPS)
                     if (!muxerRef.current && metadata?.decoderConfig?.description) {
                         const description = new Uint8Array(metadata.decoderConfig.description as ArrayBuffer);
@@ -186,18 +257,30 @@ export const useRecorder = () => {
                         );
                     }
                 },
-                error: (e) => console.error(e),
+                error: (e) => {
+                    // Only log error if we're not already stopping (expected during shutdown)
+                    if (isProcessorActiveRef.current) {
+                        console.error("VideoEncoder error:", e);
+                    } else {
+                        console.log("VideoEncoder error during shutdown (expected):", e.message);
+                    }
+                    // Stop processing immediately on encoder error to prevent cascade failures
+                    isProcessorActiveRef.current = false;
+                    workerRef.current?.postMessage('stop');
+                },
             });
 
+            // Configure encoder with settings optimized for performance and quality balance
+            // High Profile Level 4.0 (640028) supports 1080p resolution
+            // Hardware acceleration required to offload encoding to GPU for smooth recording
             encoder.configure({
-                // Level 4.2 (supports 1080p @ 60fps)
-                // Profile: Baseline (42) or Main (4d) or High (64). 
-                // Let's use Constrained Baseline (42002a) for max compatibility but higher level.
-                codec: 'avc1.42002a',
+                codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
                 width: width,
                 height: height,
-                bitrate: 6_000_000, // 6 Mbps
-                framerate: 60,
+                bitrate: 8_000_000, // 8 Mbps - balanced bitrate for quality without overwhelming CPU
+                framerate: 30, // 30fps for smooth recording without laggy performance
+                hardwareAcceleration: 'prefer-hardware', // Prefer hardware encoding for better performance
+                latencyMode: 'realtime', // Realtime mode for responsive encoding
             });
             videoEncoderRef.current = encoder;
 
@@ -205,10 +288,28 @@ export const useRecorder = () => {
             const video = document.createElement('video');
             video.srcObject = displayMedia;
             video.muted = true; // Important for autoplay
+            videoElementRef.current = video;
+            
+            // Add video error handler
+            video.onerror = (e) => {
+                console.error("Video element error:", e);
+                isProcessorActiveRef.current = false;
+                workerRef.current?.postMessage('stop');
+            };
+            
             video.play();
+            
+            // Physics counter for smooth camera at 60fps while encoding at 30fps
+            let physicsFrameCount = 0;
 
             const draw = () => {
                 if (!isProcessorActiveRef.current) return;
+                
+                // Check if video is still valid and has data
+                if (!video || video.readyState < 2) {
+                    console.warn("Video not ready, skipping frame");
+                    return;
+                }
 
                 if (frameCountRef.current % 60 === 0) {
                     console.log(`🎨 draw() called for frame ${frameCountRef.current}`);
@@ -248,8 +349,6 @@ export const useRecorder = () => {
                     let minX = 64, maxX = 0;
                     let minY = 36, maxY = 0;
 
-                    const threshold = 15; // Sensitivity (Lower is more sensitive)
-
                     for (let i = 0; i < frameData.length; i += 4) {
                         // Simple luminosity diff
                         const rDiff = Math.abs(frameData[i] - prevData[i]);
@@ -257,7 +356,7 @@ export const useRecorder = () => {
                         const bDiff = Math.abs(frameData[i + 2] - prevData[i + 2]);
 
                         // Check if pixel changed significantly
-                        if (rDiff + gDiff + bDiff > threshold) {
+                        if (rDiff + gDiff + bDiff > MOTION_CONFIG.THRESHOLD) {
                             const pixelIdx = i / 4;
                             const x = pixelIdx % 64;
                             const y = Math.floor(pixelIdx / 64);
@@ -278,7 +377,7 @@ export const useRecorder = () => {
                     prevFrameDataRef.current.set(frameData);
 
                     // If enough pixels changed, update target
-                    if (totalMass > 5) { // Minimum blob size
+                    if (totalMass > MOTION_CONFIG.MIN_MASS) {
                         // Scale back up to Source Dimensions
                         const avgX = (totalX / totalMass) * (width / 64);
                         const avgY = (totalY / totalMass) * (height / 36);
@@ -291,29 +390,41 @@ export const useRecorder = () => {
                         currentTargetRef.current.x = detectedX;
                         currentTargetRef.current.y = detectedY;
 
-                        // Calculate velocity of the detected centroid
-                        const dx = detectedX - prevDetectedTargetRef.current.x;
-                        const dy = detectedY - prevDetectedTargetRef.current.y;
-                        const velocity = Math.sqrt(dx * dx + dy * dy);
-
                         // Update history
                         prevDetectedTargetRef.current.x = detectedX;
                         prevDetectedTargetRef.current.y = detectedY;
 
-                        // Heuristic for Scrolling vs Clicking
-                        // Scrolling usually affects the entire height or width of the screen (or large parts)
-                        // 36 is the height of our analysis buffer.
-                        // If the changed area height > 12 (approx 1/3 of screen height), assume scroll.
+                        // Improved heuristics for detecting action vs scrolling
+                        const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
-                        const isScrolling = heightChange > 12;
+                        const changeArea = widthChange * heightChange;
+                        
+                        // Scrolling detection: VERY lenient for reliable detection
+                        // Even small vertical scrolls should trigger zoom out
+                        const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
+                        const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA; // Just needs to be bigger than click area
+                        const isScrolling = hasVerticalScroll && hasWideArea;
+                        
+                        // Localized action: MUST be small focused area
+                        // This prevents any scroll from being misclassified as a click
+                        const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
+                                                 totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                                 !isScrolling; // Explicitly exclude scrolling
 
-                        // Smart Autozoom: Only zoom if:
-                        // 1. Mass is high (action)
-                        // 2. Velocity is low (staying in place)
-                        // 3. NOT Scrolling (change area is compact)
-                        if (totalMass > 12 && velocity < 50 && !isScrolling) {
-                            rigRef.current.set_target_zoom(1.8);
+                        // Smart Autozoom with clear priority:
+                        // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
+                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions)
+                        // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
+                        if (isScrolling) {
+                            // Scrolling detected - ALWAYS zoom OUT to overview for context
+                            // This takes absolute priority over everything else
+                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                        } else if (isLocalizedAction) {
+                            // Focused action detected (click, type) - zoom in
+                            // Only triggers if NOT scrolling
+                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                         }
+                        // For light motion (panning, slight hover), maintain current zoom level
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
@@ -326,16 +437,19 @@ export const useRecorder = () => {
 
                 if (timeSinceMotion > 2000) { // 2s idle
                     // Zoom OUT
-                    rigRef.current.set_target_zoom(1.0);
+                    rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
                 // Use Motion Target for Physics
                 const targetX = currentTargetRef.current.x;
                 const targetY = currentTargetRef.current.y;
 
-                // Update Physics
+                // Update Physics at 60fps for buttery smooth camera movement
+                // Even though we encode at 30fps, smooth physics makes the experience feel responsive
                 rigRef.current.update(targetX, targetY, 1 / 60);
                 const view = rigRef.current.get_view_rect();
+                
+                physicsFrameCount++;
 
                 if (frameCountRef.current % 120 === 0) {
                     console.log("📹 View:", view);
@@ -364,7 +478,7 @@ export const useRecorder = () => {
                 ctx.translate(width / 2, height / 2); // Center of canvas
                 ctx.scale(view.zoom, view.zoom);
                 ctx.translate(-view.x, -view.y); // Move focus point to center
-                ctx.drawImage(video, 0, 0);
+                ctx.drawImage(video, 0, 0, width, height); // Explicitly set video dimensions
                 ctx.restore();
 
                 // Use REAL ELAPSED TIME - muxer uses milliseconds timescale
@@ -378,17 +492,46 @@ export const useRecorder = () => {
 
                 // Diagnostic logging - EVERY 30 frames to see if loop is running
                 if (frameCountRef.current % 30 === 0) {
-                    const expected = (frameCountRef.current / 60 * 1000);
-                    console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 60fps`);
+                    const expected = (frameCountRef.current / 30 * 1000);
+                    console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 30fps`);
                 }
 
-                if (encoder.state === "configured") {
-                    try {
-                        const frame = new VideoFrame(canvasRef.current, { timestamp });
-                        encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
-                        frame.close();
-                    } catch (e) {
-                         console.error("Frame encoding error:", e);
+                // Only encode every other physics frame (30fps encoding from 60fps physics)
+                // This keeps camera movement smooth while maintaining efficient encoding
+                const shouldEncode = physicsFrameCount % 2 === 0;
+                
+                // Only encode if we're still actively recording, encoder is ready, and video track is active
+                if (displayMedia && shouldEncode) {
+                    const videoTrack = displayMedia.getVideoTracks()[0];
+                    if (isProcessorActiveRef.current && 
+                        encoder.state === "configured" && 
+                        videoTrack && 
+                        videoTrack.readyState === 'live') {
+                        try {
+                            // Adaptive queue management for smooth startup and sustained performance
+                            // More lenient at startup (first 60 frames), then stricter for steady state
+                            const isStartup = frameCountRef.current < 60;
+                            const queueLimit = isStartup ? 15 : 8;
+                            
+                            // Check encoder queue size to prevent overflow on animated content
+                            if (encoder.encodeQueueSize < queueLimit) {
+                                const frame = new VideoFrame(canvasRef.current!, { timestamp });
+                                encoder.encode(frame, { keyFrame: frameCountRef.current % 30 === 0 });
+                                frame.close();
+                            } else {
+                                // Queue is backing up - skip frame to let encoder catch up
+                                if (frameCountRef.current % 60 === 0) {
+                                    console.warn(`⚠️ Encoder queue: ${encoder.encodeQueueSize}/${queueLimit}, skipping frame`);
+                                }
+                            }
+                        } catch (e) {
+                             console.error("Frame encoding error:", e);
+                             // Stop on encoding error to prevent cascade
+                             isProcessorActiveRef.current = false;
+                        }
+                    } else if (videoTrack && videoTrack.readyState !== 'live') {
+                        console.warn("Video track no longer live, stopping frame generation");
+                        isProcessorActiveRef.current = false;
                     }
                 }
 
@@ -400,7 +543,7 @@ export const useRecorder = () => {
             };
 
             video.onloadedmetadata = () => {
-                console.log("📺 Video loaded, starting Worker loop...");
+                console.log("📺 Video loaded, starting Worker loop at 60fps for smooth camera...");
 
                 // Activate Processor
                 isProcessorActiveRef.current = true;
@@ -418,14 +561,18 @@ export const useRecorder = () => {
                             }
                         }
                     };
-                    // Start the worker timer
-                    workerRef.current.postMessage('start');
-                    console.log("🚀 Worker loop started");
+                    // Start the worker timer at 60fps for smooth camera physics
+                    // (We'll encode at 30fps by skipping every other frame)
+                    workerRef.current.postMessage({ type: 'start', fps: 60 });
+                    console.log("🚀 Worker loop started at 60fps for buttery smooth zoom and pan");
                 }
             };
 
-            // Stop handler
+            // Stop handler - when track ends (user clicks "Stop Sharing")
             track.onended = () => {
+                console.log("📹 Video track ended - stopping recording");
+                // Don't set isProcessorActiveRef here - let stopRecording handle it
+                // Otherwise stopRecording's early return will skip cleanup!
                 stopRecording();
             };
 
