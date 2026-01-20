@@ -268,11 +268,11 @@ export const useRecorder = () => {
             });
 
             // Configure encoder with settings optimized for complex animated content
-            // High profile (64001f) provides better compression for complex scenes
+            // High Profile Level 4.0 (640028) supports 1080p resolution
             // Higher bitrate (12 Mbps) handles detailed animations without quality loss
             // Hardware acceleration preference uses GPU encoding when available
             encoder.configure({
-                codec: 'avc1.64001f', // High Profile, Level 3.1 - better compression for animations
+                codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
                 width: width,
                 height: height,
                 bitrate: 12_000_000, // 12 Mbps - higher bitrate for complex animated content
