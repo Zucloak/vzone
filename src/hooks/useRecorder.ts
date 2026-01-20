@@ -5,16 +5,16 @@ import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 12,              // RGB diff threshold (lower = more sensitive)
-    MIN_MASS: 3,                // Minimum changed pixels to register motion
+    THRESHOLD: 10,              // RGB diff threshold (lower = more sensitive)
+    MIN_MASS: 2,                // Minimum changed pixels to register motion
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
+    SCROLL_HEIGHT_THRESHOLD: 5,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
     SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 350,  // Max area for click/type actions (pixels²) - tight for precise detection
+    LOCALIZED_ACTION_AREA: 150,  // Max area for click/type actions (pixels²) - tight for precise detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom - balanced to avoid false positives
+    ZOOM_MIN_MASS: 6,           // Minimum mass to trigger zoom - balanced to avoid false positives
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     
@@ -46,6 +46,7 @@ export const useRecorder = () => {
     const rigRef = useRef<CameraRig | null>(null);
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
+    const warmupFramesRef = useRef(0);
     const startTimeRef = useRef<number>(0);
 
     // Background State
@@ -351,6 +352,8 @@ export const useRecorder = () => {
             const draw = () => {
                 if (!isProcessorActiveRef.current) return;
                 
+                warmupFramesRef.current++;
+
                 // Check if video is still valid and has data
                 if (!video || video.readyState < 2) {
                     console.warn("Video not ready, skipping frame");
@@ -453,22 +456,30 @@ export const useRecorder = () => {
                         
                         // Localized action: MUST be small focused area
                         // This prevents any scroll from being misclassified as a click
+                        const isCompact = widthChange < 20 && heightChange < 20; // 20/64 width, 20/36 height - roughly 1/3 screen
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                                  totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                                 isCompact && // Must be compact to be a click
                                                  !isScrolling; // Explicitly exclude scrolling
 
                         // Smart Autozoom with clear priority:
                         // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
                         // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions)
                         // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
-                        if (isScrolling) {
-                            // Scrolling detected - ALWAYS zoom OUT to overview for context
-                            // This takes absolute priority over everything else
-                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                        } else if (isLocalizedAction) {
-                            // Focused action detected (click, type) - zoom in
-                            // Only triggers if NOT scrolling
-                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+
+                        // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
+                        if (warmupFramesRef.current < 90) {
+                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                        } else {
+                            if (isScrolling) {
+                                // Scrolling detected - ALWAYS zoom OUT to overview for context
+                                // This takes absolute priority over everything else
+                                rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                            } else if (isLocalizedAction) {
+                                // Focused action detected (click, type) - zoom in
+                                // Only triggers if NOT scrolling
+                                rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+                            }
                         }
                         // For light motion (panning, slight hover), maintain current zoom level
                     }
