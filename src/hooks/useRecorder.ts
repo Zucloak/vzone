@@ -249,7 +249,12 @@ export const useRecorder = () => {
                     }
                 },
                 error: (e) => {
-                    console.error("VideoEncoder error:", e);
+                    // Only log error if we're not already stopping (expected during shutdown)
+                    if (isProcessorActiveRef.current) {
+                        console.error("VideoEncoder error:", e);
+                    } else {
+                        console.log("VideoEncoder error during shutdown (expected):", e.message);
+                    }
                     // Stop processing immediately on encoder error to prevent cascade failures
                     isProcessorActiveRef.current = false;
                     workerRef.current?.postMessage('stop');
