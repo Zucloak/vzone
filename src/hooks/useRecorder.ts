@@ -468,7 +468,8 @@ export const useRecorder = () => {
                         // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
-                        if (warmupFramesRef.current < 90) {
+                        // UNLESS a clear click is detected (override warmup for responsiveness)
+                        if (warmupFramesRef.current < 90 && !isLocalizedAction) {
                              rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                         } else {
                             if (isScrolling) {
