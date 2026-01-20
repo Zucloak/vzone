@@ -528,10 +528,8 @@ export const useRecorder = () => {
             // Stop handler - when track ends (user clicks "Stop Sharing")
             track.onended = () => {
                 console.log("📹 Video track ended - stopping recording");
-                // Immediately stop frame generation when track ends
-                isProcessorActiveRef.current = false;
-                workerRef.current?.postMessage('stop');
-                // Call stopRecording to clean up
+                // Don't set isProcessorActiveRef here - let stopRecording handle it
+                // Otherwise stopRecording's early return will skip cleanup!
                 stopRecording();
             };
 
