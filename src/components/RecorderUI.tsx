@@ -122,10 +122,6 @@ export const RecorderUI: React.FC = () => {
                             </span>
                         </p>
 
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100 mt-8">
-                            <h3 className="text-sm font-bold text-neutral-900 mb-4">Choose Background (Baked in)</h3>
-                            <BackgroundPicker config={backgroundConfig} onChange={setBackground} />
-                        </div>
 
                         <button
                             onClick={startRecording}
@@ -181,6 +177,10 @@ export const RecorderUI: React.FC = () => {
                                 <div className="text-sm text-neutral-600 mb-4">
                                     Your recording is processed and ready.
                                 </div>
+
+                                <div className="border-t border-neutral-100 my-6"></div>
+                                <h3 className="text-sm font-bold text-neutral-900 mb-4">Choose Background</h3>
+                                <BackgroundPicker config={backgroundConfig} onChange={setBackground} />
                             </div>
 
                             <button
