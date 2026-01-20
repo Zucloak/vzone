@@ -396,24 +396,25 @@ export const useRecorder = () => {
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
                         
-                        // Scrolling typically affects large areas continuously
-                        // Clicking/typing affects smaller, more localized areas
-                        const isScrolling = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD || 
-                                          widthChange > MOTION_CONFIG.SCROLL_WIDTH_THRESHOLD;
+                        // Scrolling detection: Must have BOTH vertical movement AND large area
+                        // This prevents false positives from clicking/typing
+                        const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
+                        const hasLargeArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA * 2; // 2x threshold
+                        const isScrolling = hasVerticalScroll && hasLargeArea;
+                        
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && !isScrolling;
 
                         // Smart Autozoom: Zoom in for clicks, typing, and focused actions
-                        // Only zoom out for actual scrolling (large area changes), NOT just high velocity
+                        // NEVER zoom during scrolling - maintain current zoom level for smooth panning
                         // This allows smooth panning between clicks while staying zoomed in
                         if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS) {
-                            // Focused action detected (click, type, etc.) - stay zoomed in
+                            // Focused action detected (click, type, etc.) - zoom in
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
-                        } else if (isScrolling) {
-                            // Scrolling detected (large area change) - zoom out for overview
-                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                        } else if (!isScrolling && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS) {
+                            // Motion detected but not scrolling - maintain zoom for smooth panning
+                            // Don't change zoom level, just let camera pan
                         }
-                        // For high velocity without scrolling indicators, do nothing - 
-                        // let camera pan smoothly while maintaining current zoom level
+                        // For scrolling, do nothing - maintain current zoom and let camera pan smoothly
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
