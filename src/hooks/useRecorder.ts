@@ -1,4 +1,4 @@
-import type { BackgroundConfig } from '../types';
+import type { BackgroundConfig, VideoQuality, DeviceCapability } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
 
@@ -31,6 +31,14 @@ export const useRecorder = () => {
     const [isReady, setIsReady] = useState(false);
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+
+    // Settings
+    const [quality, setQuality] = useState<VideoQuality>('high');
+    const [deviceCapability, setDeviceCapability] = useState<DeviceCapability>({
+        cpuCores: 4,
+        canHandleHighest: true,
+        tier: 'standard'
+    });
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
@@ -75,6 +83,36 @@ export const useRecorder = () => {
         return () => {
             workerRef.current?.terminate();
         };
+    }, []);
+
+    // Device Detection
+    useEffect(() => {
+        const cores = navigator.hardwareConcurrency || 4;
+        // @ts-ignore - deviceMemory is experimental
+        const ram = (navigator as any).deviceMemory || 4;
+
+        let tier: DeviceCapability['tier'] = 'standard';
+        let canHandleHighest = true;
+        let recommendedQuality: VideoQuality = 'high';
+
+        if (cores >= 8 && ram >= 8) {
+            tier = 'high-end';
+            recommendedQuality = 'highest';
+        } else if (cores < 4 || ram < 4) {
+            tier = 'low-end';
+            canHandleHighest = false;
+            recommendedQuality = 'low';
+        }
+
+        console.log(`💻 Device Detection: Cores=${cores}, RAM=${ram}GB, Tier=${tier}`);
+
+        setDeviceCapability({
+            cpuCores: cores,
+            memory: ram,
+            canHandleHighest,
+            tier
+        });
+        setQuality(recommendedQuality);
     }, []);
 
     const setBackground = useCallback((config: BackgroundConfig) => {
@@ -273,11 +311,19 @@ export const useRecorder = () => {
             // Configure encoder with settings optimized for performance and quality balance
             // High Profile Level 4.0 (640028) supports 1080p resolution
             // Hardware acceleration required to offload encoding to GPU for smooth recording
+
+            // Bitrate selection based on quality
+            let targetBitrate = 8_000_000; // Default Highest
+            if (quality === 'high') targetBitrate = 4_000_000;
+            if (quality === 'low') targetBitrate = 2_000_000;
+
+            console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps`);
+
             encoder.configure({
                 codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
                 width: width,
                 height: height,
-                bitrate: 8_000_000, // 8 Mbps - balanced bitrate for quality without overwhelming CPU
+                bitrate: targetBitrate,
                 framerate: 30, // 30fps for smooth recording without laggy performance
                 hardwareAcceleration: 'prefer-hardware', // Prefer hardware encoding for better performance
                 latencyMode: 'realtime', // Realtime mode for responsive encoding
@@ -587,7 +633,7 @@ export const useRecorder = () => {
             setIsRecording(false);
             alert("Failed to start recording core. Please check permissions or refresh.");
         }
-    }, [stopRecording]);
+    }, [stopRecording, quality]);
 
     // DELETED OLD stopRecording LOCATION
 
@@ -599,6 +645,9 @@ export const useRecorder = () => {
         canvasRef,
         previewBlobUrl,
         setBackground,
-        backgroundConfig
+        backgroundConfig,
+        quality,
+        setQuality,
+        deviceCapability
     };
 };

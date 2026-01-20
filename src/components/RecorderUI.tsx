@@ -13,7 +13,10 @@ export const RecorderUI: React.FC = () => {
         canvasRef,
         previewBlobUrl,
         setBackground,
-        backgroundConfig
+        backgroundConfig,
+        quality,
+        setQuality,
+        deviceCapability
     } = useRecorder();
 
     // Local state for UI feedback (timers, etc.) that mirrors the hook
@@ -122,6 +125,53 @@ export const RecorderUI: React.FC = () => {
                             </span>
                         </p>
 
+                        {/* Device & Quality Settings */}
+                        <div className="flex flex-col items-center gap-4 py-2">
+                             {/* Device Tier Badge */}
+                             <div className={`text-xs px-3 py-1 rounded-full border flex items-center gap-2 ${
+                                deviceCapability.tier === 'high-end' ? 'bg-green-50 border-green-200 text-green-700' :
+                                deviceCapability.tier === 'standard' ? 'bg-blue-50 border-blue-200 text-blue-700' :
+                                'bg-orange-50 border-orange-200 text-orange-700'
+                             }`}>
+                                <span>
+                                {deviceCapability.tier === 'high-end' ? '🚀 High-Performance Device Detected' :
+                                 deviceCapability.tier === 'standard' ? '⚡ Standard Device Detected' :
+                                 '⚠️ Low-Spec Device Detected'}
+                                </span>
+                             </div>
+
+                             {/* Quality Selector */}
+                             <div className="flex flex-col items-center gap-2">
+                                <div className="flex bg-white border border-neutral-200 p-1 rounded-lg shadow-sm">
+                                    <button
+                                        onClick={() => setQuality('low')}
+                                        className={`px-3 py-1 text-sm rounded-md transition-all ${quality === 'low' ? 'bg-neutral-900 text-white shadow-sm font-medium' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50'}`}
+                                    >
+                                        Low
+                                    </button>
+                                    <button
+                                        onClick={() => setQuality('high')}
+                                        className={`px-3 py-1 text-sm rounded-md transition-all ${quality === 'high' ? 'bg-neutral-900 text-white shadow-sm font-medium' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50'}`}
+                                    >
+                                        High
+                                    </button>
+                                    <button
+                                        onClick={() => setQuality('highest')}
+                                        disabled={!deviceCapability.canHandleHighest}
+                                        title={!deviceCapability.canHandleHighest ? "Your device may struggle with Highest quality" : ""}
+                                        className={`px-3 py-1 text-sm rounded-md transition-all ${quality === 'highest' ? 'bg-neutral-900 text-white shadow-sm font-medium' :
+                                            !deviceCapability.canHandleHighest ? 'opacity-40 cursor-not-allowed text-neutral-300' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50'}`}
+                                    >
+                                        Highest
+                                    </button>
+                                </div>
+                                {!deviceCapability.canHandleHighest && (
+                                    <p className="text-[10px] text-orange-600 max-w-xs font-medium bg-orange-50 px-2 py-1 rounded">
+                                        "Highest" disabled for smooth recording
+                                    </p>
+                                )}
+                             </div>
+                        </div>
 
                         <button
                             onClick={startRecording}
