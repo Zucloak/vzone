@@ -295,6 +295,9 @@ export const useRecorder = () => {
             };
             
             video.play();
+            
+            // Physics counter for smooth camera at 60fps while encoding at 30fps
+            let physicsFrameCount = 0;
 
             const draw = () => {
                 if (!isProcessorActiveRef.current) return;
@@ -430,9 +433,12 @@ export const useRecorder = () => {
                 const targetX = currentTargetRef.current.x;
                 const targetY = currentTargetRef.current.y;
 
-                // Update Physics with 30fps timing
-                rigRef.current.update(targetX, targetY, 1 / 30);
+                // Update Physics at 60fps for buttery smooth camera movement
+                // Even though we encode at 30fps, smooth physics makes the experience feel responsive
+                rigRef.current.update(targetX, targetY, 1 / 60);
                 const view = rigRef.current.get_view_rect();
+                
+                physicsFrameCount++;
 
                 if (frameCountRef.current % 120 === 0) {
                     console.log("📹 View:", view);
@@ -479,8 +485,12 @@ export const useRecorder = () => {
                     console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 30fps`);
                 }
 
+                // Only encode every other physics frame (30fps encoding from 60fps physics)
+                // This keeps camera movement smooth while maintaining efficient encoding
+                const shouldEncode = physicsFrameCount % 2 === 0;
+                
                 // Only encode if we're still actively recording, encoder is ready, and video track is active
-                if (displayMedia) {
+                if (displayMedia && shouldEncode) {
                     const videoTrack = displayMedia.getVideoTracks()[0];
                     if (isProcessorActiveRef.current && 
                         encoder.state === "configured" && 
@@ -518,7 +528,7 @@ export const useRecorder = () => {
             };
 
             video.onloadedmetadata = () => {
-                console.log("📺 Video loaded, starting Worker loop...");
+                console.log("📺 Video loaded, starting Worker loop at 60fps for smooth camera...");
 
                 // Activate Processor
                 isProcessorActiveRef.current = true;
@@ -536,9 +546,10 @@ export const useRecorder = () => {
                             }
                         }
                     };
-                    // Start the worker timer
-                    workerRef.current.postMessage('start');
-                    console.log("🚀 Worker loop started");
+                    // Start the worker timer at 60fps for smooth camera physics
+                    // (We'll encode at 30fps by skipping every other frame)
+                    workerRef.current.postMessage({ type: 'start', fps: 60 });
+                    console.log("🚀 Worker loop started at 60fps for buttery smooth zoom and pan");
                 }
             };
 
