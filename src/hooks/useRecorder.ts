@@ -9,12 +9,12 @@ const MOTION_CONFIG = {
     MIN_MASS: 3,                // Minimum changed pixels to register motion
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 15, // Height change indicating scroll (out of 36 pixels)
+    SCROLL_HEIGHT_THRESHOLD: 12, // Height change indicating scroll (out of 36 pixels) - lowered for better detection
     SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 300,  // Max area for click/type actions (pixels²)
+    LOCALIZED_ACTION_AREA: 400,  // Max area for click/type actions (pixels²) - increased slightly
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom
+    ZOOM_MIN_MASS: 6,           // Minimum mass to trigger zoom - lowered for more responsive clicks
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     
@@ -396,26 +396,30 @@ export const useRecorder = () => {
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
                         
-                        // Scrolling detection: Must have BOTH vertical movement AND large area
-                        // This prevents false positives from clicking/typing
+                        // Scrolling detection: Prioritize vertical movement with large area
+                        // More lenient detection for reliable zoom-out on scroll
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
-                        const hasLargeArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA * 2; // 2x threshold
+                        const hasLargeArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA * 1.5; // 1.5x threshold for better detection
                         const isScrolling = hasVerticalScroll && hasLargeArea;
                         
-                        const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && !isScrolling;
+                        // Localized action: small area with sufficient mass
+                        const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
+                                                 totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                                 !isScrolling;
 
-                        // Smart Autozoom: Only zoom in for localized, high-intensity actions (clicks, typing)
-                        // Scrolling always zooms OUT to overview
-                        // This prevents zoom from hovering or idle mouse movement
+                        // Smart Autozoom with immediate response:
+                        // 1. Scrolling ALWAYS zooms OUT to overview - no exceptions
+                        // 2. Localized actions (clicks, typing) zoom IN immediately
+                        // 3. Light motion maintains current zoom
                         if (isScrolling) {
-                            // Scrolling detected - zoom OUT to overview for context
+                            // Scrolling detected - immediately zoom OUT to overview for context
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                        } else if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS * 1.5) {
-                            // Focused, high-intensity action detected (click, type) - zoom in
-                            // Higher mass threshold (1.5x) prevents zoom from idle mouse hover
+                        } else if (isLocalizedAction) {
+                            // Focused action detected (click, type) - immediately zoom in
+                            // Responsive zoom with lower threshold for better UX
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                         }
-                        // For other motion (panning, light hover), maintain current zoom level
+                        // For light motion (panning, slight hover), maintain current zoom level
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
