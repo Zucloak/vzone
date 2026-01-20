@@ -52,6 +52,7 @@ export const useRecorder = () => {
     const prevDetectedTargetRef = useRef({ x: 960, y: 540 }); // For velocity calc
     const workerRef = useRef<Worker | null>(null);
     const isProcessorActiveRef = useRef(false);
+    const isStoppingRef = useRef(false);
     const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
     useEffect(() => {
@@ -82,8 +83,10 @@ export const useRecorder = () => {
     }, []);
 
     const stopRecording = useCallback(async () => {
-        // Prevent double entry
-        if (!isProcessorActiveRef.current) return;
+        // Prevent double entry with a dedicated flag
+        if (isStoppingRef.current) return;
+        isStoppingRef.current = true;
+        
         isProcessorActiveRef.current = false;
         
         console.log("🛑 stopRecording called - stopping worker and frame generation");
@@ -188,6 +191,9 @@ export const useRecorder = () => {
     const startRecording = useCallback(async () => {
         let displayMedia: MediaStream | null = null;
         try {
+            // Reset stopping flag for new recording
+            isStoppingRef.current = false;
+            
             displayMedia = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                     width: { ideal: 1920 },
