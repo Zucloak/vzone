@@ -404,17 +404,18 @@ export const useRecorder = () => {
                         
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && !isScrolling;
 
-                        // Smart Autozoom: Zoom in for clicks, typing, and focused actions
-                        // NEVER zoom during scrolling - maintain current zoom level for smooth panning
-                        // This allows smooth panning between clicks while staying zoomed in
-                        if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS) {
-                            // Focused action detected (click, type, etc.) - zoom in
+                        // Smart Autozoom: Only zoom in for localized, high-intensity actions (clicks, typing)
+                        // Scrolling always zooms OUT to overview
+                        // This prevents zoom from hovering or idle mouse movement
+                        if (isScrolling) {
+                            // Scrolling detected - zoom OUT to overview for context
+                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                        } else if (isLocalizedAction && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS * 1.5) {
+                            // Focused, high-intensity action detected (click, type) - zoom in
+                            // Higher mass threshold (1.5x) prevents zoom from idle mouse hover
                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
-                        } else if (!isScrolling && totalMass > MOTION_CONFIG.ZOOM_MIN_MASS) {
-                            // Motion detected but not scrolling - maintain zoom for smooth panning
-                            // Don't change zoom level, just let camera pan
                         }
-                        // For scrolling, do nothing - maintain current zoom and let camera pan smoothly
+                        // For other motion (panning, light hover), maintain current zoom level
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
