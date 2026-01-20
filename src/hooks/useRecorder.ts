@@ -225,7 +225,7 @@ export const useRecorder = () => {
             currentTargetRef.current = { x: width / 2, y: height / 2 };
             prevDetectedTargetRef.current = { x: width / 2, y: height / 2 };
 
-            // Initialize VideoEncoder
+            // Initialize VideoEncoder with robust configuration for animated content
             const encoder = new VideoEncoder({
                 output: (chunk, metadata) => {
                     // Only process output if we're still actively recording
@@ -267,15 +267,18 @@ export const useRecorder = () => {
                 },
             });
 
+            // Configure encoder with settings optimized for complex animated content
+            // High profile (64001f) provides better compression for complex scenes
+            // Higher bitrate (12 Mbps) handles detailed animations without quality loss
+            // Hardware acceleration preference uses GPU encoding when available
             encoder.configure({
-                // Level 4.2 (supports 1080p @ 60fps)
-                // Profile: Baseline (42) or Main (4d) or High (64). 
-                // Let's use Constrained Baseline (42002a) for max compatibility but higher level.
-                codec: 'avc1.42002a',
+                codec: 'avc1.64001f', // High Profile, Level 3.1 - better compression for animations
                 width: width,
                 height: height,
-                bitrate: 6_000_000, // 6 Mbps
+                bitrate: 12_000_000, // 12 Mbps - higher bitrate for complex animated content
                 framerate: 60,
+                hardwareAcceleration: 'prefer-hardware', // Use GPU encoding when available
+                latencyMode: 'quality', // Prioritize quality over speed for better animation handling
             });
             videoEncoderRef.current = encoder;
 
@@ -485,9 +488,18 @@ export const useRecorder = () => {
                         videoTrack && 
                         videoTrack.readyState === 'live') {
                         try {
-                            const frame = new VideoFrame(canvasRef.current!, { timestamp });
-                            encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
-                            frame.close();
+                            // Check encoder queue size to prevent overflow on animated content
+                            // If queue is too large, skip this frame to prevent memory issues
+                            if (encoder.encodeQueueSize < 15) {
+                                const frame = new VideoFrame(canvasRef.current!, { timestamp });
+                                encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
+                                frame.close();
+                            } else {
+                                // Queue is backing up - skip frame to let encoder catch up
+                                if (frameCountRef.current % 60 === 0) {
+                                    console.warn(`⚠️ Encoder queue size: ${encoder.encodeQueueSize}, skipping frame to prevent overflow`);
+                                }
+                            }
                         } catch (e) {
                              console.error("Frame encoding error:", e);
                              // Stop on encoding error to prevent cascade
