@@ -14,7 +14,7 @@ const MOTION_CONFIG = {
     LOCALIZED_ACTION_AREA: 150,  // Max area for click/type actions (pixels²) - tight for precise detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 6,           // Minimum mass to trigger zoom - balanced to avoid false positives
+    ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - ultra sensitive for immediate click detection
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     
