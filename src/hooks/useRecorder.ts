@@ -198,7 +198,7 @@ export const useRecorder = () => {
                 video: {
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
-                    frameRate: 60,
+                    frameRate: 30, // 30fps to match encoder settings for smooth recording
                 },
                 audio: {
                     echoCancellation: true,
@@ -267,18 +267,17 @@ export const useRecorder = () => {
                 },
             });
 
-            // Configure encoder with settings optimized for complex animated content
+            // Configure encoder with settings optimized for performance and quality balance
             // High Profile Level 4.0 (640028) supports 1080p resolution
-            // Higher bitrate (12 Mbps) handles detailed animations without quality loss
-            // Hardware acceleration preference uses GPU encoding when available
+            // Hardware acceleration required to offload encoding to GPU for smooth recording
             encoder.configure({
                 codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
                 width: width,
                 height: height,
-                bitrate: 12_000_000, // 12 Mbps - higher bitrate for complex animated content
-                framerate: 60,
-                hardwareAcceleration: 'prefer-hardware', // Use GPU encoding when available
-                latencyMode: 'quality', // Prioritize quality over speed for better animation handling
+                bitrate: 8_000_000, // 8 Mbps - balanced bitrate for quality without overwhelming CPU
+                framerate: 30, // 30fps for smooth recording without laggy performance
+                hardwareAcceleration: 'prefer-hardware', // Prefer hardware encoding for better performance
+                latencyMode: 'realtime', // Realtime mode for responsive encoding
             });
             videoEncoderRef.current = encoder;
 
@@ -431,8 +430,8 @@ export const useRecorder = () => {
                 const targetX = currentTargetRef.current.x;
                 const targetY = currentTargetRef.current.y;
 
-                // Update Physics
-                rigRef.current.update(targetX, targetY, 1 / 60);
+                // Update Physics with 30fps timing
+                rigRef.current.update(targetX, targetY, 1 / 30);
                 const view = rigRef.current.get_view_rect();
 
                 if (frameCountRef.current % 120 === 0) {
@@ -462,7 +461,7 @@ export const useRecorder = () => {
                 ctx.translate(width / 2, height / 2); // Center of canvas
                 ctx.scale(view.zoom, view.zoom);
                 ctx.translate(-view.x, -view.y); // Move focus point to center
-                ctx.drawImage(video, 0, 0);
+                ctx.drawImage(video, 0, 0, width, height); // Explicitly set video dimensions
                 ctx.restore();
 
                 // Use REAL ELAPSED TIME - muxer uses milliseconds timescale
@@ -476,8 +475,8 @@ export const useRecorder = () => {
 
                 // Diagnostic logging - EVERY 30 frames to see if loop is running
                 if (frameCountRef.current % 30 === 0) {
-                    const expected = (frameCountRef.current / 60 * 1000);
-                    console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 60fps`);
+                    const expected = (frameCountRef.current / 30 * 1000);
+                    console.log(`🎞️ Frame ${frameCountRef.current}: ${elapsedMs.toFixed(0)}ms elapsed, expected ~${expected.toFixed(0)}ms @ 30fps`);
                 }
 
                 // Only encode if we're still actively recording, encoder is ready, and video track is active
@@ -490,13 +489,13 @@ export const useRecorder = () => {
                         try {
                             // Check encoder queue size to prevent overflow on animated content
                             // If queue is too large, skip this frame to prevent memory issues
-                            if (encoder.encodeQueueSize < 15) {
+                            if (encoder.encodeQueueSize < 10) {
                                 const frame = new VideoFrame(canvasRef.current!, { timestamp });
-                                encoder.encode(frame, { keyFrame: frameCountRef.current % 60 === 0 });
+                                encoder.encode(frame, { keyFrame: frameCountRef.current % 30 === 0 });
                                 frame.close();
                             } else {
                                 // Queue is backing up - skip frame to let encoder catch up
-                                if (frameCountRef.current % 60 === 0) {
+                                if (frameCountRef.current % 30 === 0) {
                                     console.warn(`⚠️ Encoder queue size: ${encoder.encodeQueueSize}, skipping frame to prevent overflow`);
                                 }
                             }
