@@ -23,14 +23,14 @@ pub fn init_hooks() {
 
 // Physics constants for smooth camera movement
 // Higher stiffness = faster response, critical damping = no overshoot
-const CAMERA_STIFFNESS: f64 = 80.0;
-const CAMERA_DAMPING: f64 = 2.0 * 8.944; // Critical damping: 2 * sqrt(CAMERA_STIFFNESS)
+const CAMERA_STIFFNESS: f64 = 120.0; // Increased for snappier, more responsive camera
+const CAMERA_DAMPING: f64 = 2.0 * 10.954; // Critical damping: 2 * sqrt(120)
 const CAMERA_MASS: f64 = 1.0;
 
 // Zoom constraints
 const MIN_ZOOM: f64 = 1.0;  // 1.0 = no zoom (full view)
 const MAX_ZOOM: f64 = 2.5;  // 2.5 = maximum zoom in
-const ZOOM_TRANSITION_SPEED: f64 = 5.0; // Multiplier for zoom speed
+const ZOOM_TRANSITION_SPEED: f64 = 8.0; // Faster zoom transitions for smoother feel
 
 #[wasm_bindgen]
 pub struct CameraRig {

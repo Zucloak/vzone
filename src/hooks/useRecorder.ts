@@ -497,16 +497,20 @@ export const useRecorder = () => {
                         videoTrack && 
                         videoTrack.readyState === 'live') {
                         try {
+                            // Adaptive queue management for smooth startup and sustained performance
+                            // More lenient at startup (first 60 frames), then stricter for steady state
+                            const isStartup = frameCountRef.current < 60;
+                            const queueLimit = isStartup ? 15 : 8;
+                            
                             // Check encoder queue size to prevent overflow on animated content
-                            // If queue is too large, skip this frame to prevent memory issues
-                            if (encoder.encodeQueueSize < 10) {
+                            if (encoder.encodeQueueSize < queueLimit) {
                                 const frame = new VideoFrame(canvasRef.current!, { timestamp });
                                 encoder.encode(frame, { keyFrame: frameCountRef.current % 30 === 0 });
                                 frame.close();
                             } else {
                                 // Queue is backing up - skip frame to let encoder catch up
-                                if (frameCountRef.current % 30 === 0) {
-                                    console.warn(`⚠️ Encoder queue size: ${encoder.encodeQueueSize}, skipping frame to prevent overflow`);
+                                if (frameCountRef.current % 60 === 0) {
+                                    console.warn(`⚠️ Encoder queue: ${encoder.encodeQueueSize}/${queueLimit}, skipping frame`);
                                 }
                             }
                         } catch (e) {
