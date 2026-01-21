@@ -248,6 +248,7 @@ export const useRecorder = () => {
 
             setStream(displayMedia);
             setPreviewBlobUrl(null);
+            warmupFramesRef.current = 0; // Reset warmup counter
             lastMotionTimeRef.current = Date.now();
 
             const track = displayMedia.getVideoTracks()[0];
@@ -456,10 +457,16 @@ export const useRecorder = () => {
                         
                         // Localized action: MUST be small focused area
                         // This prevents any scroll from being misclassified as a click
-                        const isCompact = widthChange < 20 && heightChange < 20; // 20/64 width, 20/36 height - roughly 1/3 screen
+                        // Stricter height check (10) to avoid vertical scrolls being detected as clicks
+                        const isCompact = widthChange < 20 && heightChange < 10;
+
+                        // Vertical movement check: if change is mostly vertical, it's likely a scroll/mouse move
+                        const isVerticalMove = heightChange > widthChange * 1.5;
+
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                                  totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
                                                  isCompact && // Must be compact to be a click
+                                                 !isVerticalMove && // Reject mostly vertical moves (scrolls)
                                                  !isScrolling; // Explicitly exclude scrolling
 
                         // Smart Autozoom with clear priority:

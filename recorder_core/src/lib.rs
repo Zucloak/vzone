@@ -23,8 +23,8 @@ pub fn init_hooks() {
 
 // Physics constants for smooth camera movement
 // Higher stiffness = faster response, critical damping = no overshoot
-const CAMERA_STIFFNESS: f64 = 180.0; // Increased even more for immediate response to clicks
-const CAMERA_DAMPING: f64 = 2.0 * 13.416; // Critical damping: 2 * sqrt(180) -> 2 * 13.416 = 26.83
+const CAMERA_STIFFNESS: f64 = 140.0; // Reduced to prevent shaking/overshoot while keeping responsiveness
+const CAMERA_DAMPING: f64 = 2.0 * 11.832; // Critical damping: 2 * sqrt(140) -> 2 * 11.832 = 23.66
 const CAMERA_MASS: f64 = 1.0;
 
 // Zoom constraints
