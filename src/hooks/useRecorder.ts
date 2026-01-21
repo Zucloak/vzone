@@ -20,6 +20,9 @@ const MOTION_CONFIG = {
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     MOUSE_OVERRIDE_THRESHOLD: 2, // Minimum motion to override typing mode
     
+    // Smoothing
+    TARGET_SMOOTHING: 0.15,     // Lerp factor for target position (0.15 = smooth, prevents jitter)
+    
     // Zoom levels
     ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
     ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
@@ -482,9 +485,13 @@ export const useRecorder = () => {
                         detectedY = avgY;
                         lastMotionTimeRef.current = Date.now();
 
-                        // Faster target acquisition, physics handles smoothing
-                        currentTargetRef.current.x = detectedX;
-                        currentTargetRef.current.y = detectedY;
+                        // Smooth target acquisition to prevent jitter and shaking
+                        // Apply lerp to the target position before physics system
+                        const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
+                        currentTargetRef.current.x = currentTargetRef.current.x + 
+                            (detectedX - currentTargetRef.current.x) * smoothing;
+                        currentTargetRef.current.y = currentTargetRef.current.y + 
+                            (detectedY - currentTargetRef.current.y) * smoothing;
 
                         // Update history
                         prevDetectedTargetRef.current.x = detectedX;
@@ -562,8 +569,8 @@ export const useRecorder = () => {
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                     
                     // Update target to caret position with smooth lerp
-                    // Use lerp to avoid jitter when typing rapidly
-                    const lerpFactor = 0.1; // Smooth following
+                    // Use same smoothing factor as motion detection for consistency
+                    const lerpFactor = MOTION_CONFIG.TARGET_SMOOTHING;
                     currentTargetRef.current.x = currentTargetRef.current.x + 
                         (typingTargetRef.current.x - currentTargetRef.current.x) * lerpFactor;
                     currentTargetRef.current.y = currentTargetRef.current.y + 
