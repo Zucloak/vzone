@@ -20,8 +20,12 @@ const MOTION_CONFIG = {
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     MOUSE_OVERRIDE_THRESHOLD: 2, // Minimum motion to override typing mode
     
+    // Click tracking (Cursorful-style multi-click trigger)
+    CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
+    MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom
+    
     // Smoothing
-    TARGET_SMOOTHING: 0.15,     // Lerp factor for target position (0.15 = smooth, prevents jitter)
+    TARGET_SMOOTHING: 0.25,     // Lerp factor for target position (0.25 = responsive, balanced)
     
     // Zoom levels
     ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
@@ -74,6 +78,10 @@ export const useRecorder = () => {
     const typingTargetRef = useRef<{ x: number; y: number } | null>(null); // Last known caret position
     const isTypingModeRef = useRef(false); // Whether we're currently in typing mode
     const keydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null); // Store handler for cleanup
+    
+    // Click Tracking State (Cursorful-style multi-click trigger)
+    const clickTimestampsRef = useRef<number[]>([]); // Track timestamps of recent clicks
+    const zoomEnabledRef = useRef(false); // Whether zoom is enabled (2+ clicks detected)
 
     useEffect(() => {
         // Init Wasm
@@ -530,9 +538,25 @@ export const useRecorder = () => {
                                                  !isVerticalMove && // Reject mostly vertical moves (scrolls)
                                                  !isScrolling; // Explicitly exclude scrolling
 
+                        // Click tracking: Add timestamp when a localized action is detected
+                        if (isLocalizedAction) {
+                            const now = Date.now();
+                            clickTimestampsRef.current.push(now);
+                            
+                            // Remove old clicks outside the time window
+                            clickTimestampsRef.current = clickTimestampsRef.current.filter(
+                                timestamp => now - timestamp < MOTION_CONFIG.CLICK_WINDOW_MS
+                            );
+                            
+                            // Enable zoom if we have 2+ clicks within the window
+                            if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
+                                zoomEnabledRef.current = true;
+                            }
+                        }
+
                         // Smart Autozoom with clear priority:
                         // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
-                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions)
+                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions) - ONLY if zoom enabled
                         // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
@@ -544,7 +568,10 @@ export const useRecorder = () => {
                                 // Scrolling detected - ALWAYS zoom OUT to overview for context
                                 // This takes absolute priority over everything else
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                            } else if (isLocalizedAction) {
+                                // Reset zoom enablement on scroll
+                                zoomEnabledRef.current = false;
+                                clickTimestampsRef.current = [];
+                            } else if (isLocalizedAction && zoomEnabledRef.current) {
                                 // Focused action detected (click, type) - zoom in
                                 // Only triggers if NOT scrolling
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
