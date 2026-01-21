@@ -1,20 +1,20 @@
-import type { BackgroundConfig } from '../types';
+import type { BackgroundConfig, VideoQuality, DeviceCapability } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
 
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 12,              // RGB diff threshold (lower = more sensitive)
-    MIN_MASS: 3,                // Minimum changed pixels to register motion
+    THRESHOLD: 10,              // RGB diff threshold (lower = more sensitive)
+    MIN_MASS: 2,                // Minimum changed pixels to register motion
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
+    SCROLL_HEIGHT_THRESHOLD: 5,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
     SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 350,  // Max area for click/type actions (pixels²) - tight for precise detection
+    LOCALIZED_ACTION_AREA: 150,  // Max area for click/type actions (pixels²) - tight for precise detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom - balanced to avoid false positives
+    ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - ultra sensitive for immediate click detection
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
     
@@ -32,12 +32,21 @@ export const useRecorder = () => {
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
 
+    // Settings
+    const [quality, setQuality] = useState<VideoQuality>('high');
+    const [deviceCapability, setDeviceCapability] = useState<DeviceCapability>({
+        cpuCores: 4,
+        canHandleHighest: true,
+        tier: 'standard'
+    });
+
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
     const muxerRef = useRef<Mp4Muxer | null>(null);
     const rigRef = useRef<CameraRig | null>(null);
     const videoEncoderRef = useRef<VideoEncoder | null>(null);
     const frameCountRef = useRef(0);
+    const warmupFramesRef = useRef(0);
     const startTimeRef = useRef<number>(0);
 
     // Background State
@@ -75,6 +84,36 @@ export const useRecorder = () => {
         return () => {
             workerRef.current?.terminate();
         };
+    }, []);
+
+    // Device Detection
+    useEffect(() => {
+        const cores = navigator.hardwareConcurrency || 4;
+        // @ts-ignore - deviceMemory is experimental
+        const ram = (navigator as any).deviceMemory || 4;
+
+        let tier: DeviceCapability['tier'] = 'standard';
+        let canHandleHighest = true;
+        let recommendedQuality: VideoQuality = 'high';
+
+        if (cores >= 8 && ram >= 8) {
+            tier = 'high-end';
+            recommendedQuality = 'highest';
+        } else if (cores < 4 || ram < 4) {
+            tier = 'low-end';
+            canHandleHighest = false;
+            recommendedQuality = 'low';
+        }
+
+        console.log(`💻 Device Detection: Cores=${cores}, RAM=${ram}GB, Tier=${tier}`);
+
+        setDeviceCapability({
+            cpuCores: cores,
+            memory: ram,
+            canHandleHighest,
+            tier
+        });
+        setQuality(recommendedQuality);
     }, []);
 
     const setBackground = useCallback((config: BackgroundConfig) => {
@@ -209,6 +248,7 @@ export const useRecorder = () => {
 
             setStream(displayMedia);
             setPreviewBlobUrl(null);
+            warmupFramesRef.current = 0; // Reset warmup counter
             lastMotionTimeRef.current = Date.now();
 
             const track = displayMedia.getVideoTracks()[0];
@@ -273,11 +313,19 @@ export const useRecorder = () => {
             // Configure encoder with settings optimized for performance and quality balance
             // High Profile Level 4.0 (640028) supports 1080p resolution
             // Hardware acceleration required to offload encoding to GPU for smooth recording
+
+            // Bitrate selection based on quality
+            let targetBitrate = 8_000_000; // Default Highest
+            if (quality === 'high') targetBitrate = 4_000_000;
+            if (quality === 'low') targetBitrate = 2_000_000;
+
+            console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps`);
+
             encoder.configure({
                 codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
                 width: width,
                 height: height,
-                bitrate: 8_000_000, // 8 Mbps - balanced bitrate for quality without overwhelming CPU
+                bitrate: targetBitrate,
                 framerate: 30, // 30fps for smooth recording without laggy performance
                 hardwareAcceleration: 'prefer-hardware', // Prefer hardware encoding for better performance
                 latencyMode: 'realtime', // Realtime mode for responsive encoding
@@ -305,6 +353,8 @@ export const useRecorder = () => {
             const draw = () => {
                 if (!isProcessorActiveRef.current) return;
                 
+                warmupFramesRef.current++;
+
                 // Check if video is still valid and has data
                 if (!video || video.readyState < 2) {
                     console.warn("Video not ready, skipping frame");
@@ -407,22 +457,37 @@ export const useRecorder = () => {
                         
                         // Localized action: MUST be small focused area
                         // This prevents any scroll from being misclassified as a click
+                        // Stricter height check (10) to avoid vertical scrolls being detected as clicks
+                        const isCompact = widthChange < 20 && heightChange < 10;
+
+                        // Vertical movement check: if change is mostly vertical, it's likely a scroll/mouse move
+                        const isVerticalMove = heightChange > widthChange * 1.5;
+
                         const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                                  totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                                 isCompact && // Must be compact to be a click
+                                                 !isVerticalMove && // Reject mostly vertical moves (scrolls)
                                                  !isScrolling; // Explicitly exclude scrolling
 
                         // Smart Autozoom with clear priority:
                         // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
                         // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions)
                         // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
-                        if (isScrolling) {
-                            // Scrolling detected - ALWAYS zoom OUT to overview for context
-                            // This takes absolute priority over everything else
-                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                        } else if (isLocalizedAction) {
-                            // Focused action detected (click, type) - zoom in
-                            // Only triggers if NOT scrolling
-                            rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+
+                        // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
+                        // UNLESS a clear click is detected (override warmup for responsiveness)
+                        if (warmupFramesRef.current < 90 && !isLocalizedAction) {
+                             rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                        } else {
+                            if (isScrolling) {
+                                // Scrolling detected - ALWAYS zoom OUT to overview for context
+                                // This takes absolute priority over everything else
+                                rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                            } else if (isLocalizedAction) {
+                                // Focused action detected (click, type) - zoom in
+                                // Only triggers if NOT scrolling
+                                rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+                            }
                         }
                         // For light motion (panning, slight hover), maintain current zoom level
                     }
@@ -587,7 +652,7 @@ export const useRecorder = () => {
             setIsRecording(false);
             alert("Failed to start recording core. Please check permissions or refresh.");
         }
-    }, [stopRecording]);
+    }, [stopRecording, quality]);
 
     // DELETED OLD stopRecording LOCATION
 
@@ -599,6 +664,9 @@ export const useRecorder = () => {
         canvasRef,
         previewBlobUrl,
         setBackground,
-        backgroundConfig
+        backgroundConfig,
+        quality,
+        setQuality,
+        deviceCapability
     };
 };

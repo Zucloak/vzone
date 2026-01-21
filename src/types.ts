@@ -22,3 +22,12 @@ export interface ProcessingStatus {
     stage: string;
     progress: number; // 0-100
 }
+
+export type VideoQuality = 'highest' | 'high' | 'low';
+
+export interface DeviceCapability {
+    cpuCores: number;
+    memory?: number; // RAM in GB (approx)
+    canHandleHighest: boolean;
+    tier: 'high-end' | 'standard' | 'low-end';
+}
