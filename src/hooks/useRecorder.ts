@@ -1,6 +1,7 @@
 import type { BackgroundConfig, VideoQuality, DeviceCapability } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
+import { getCaretCoordinates, isTypingActive } from '../utils/caretTracking';
 
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
@@ -63,6 +64,12 @@ export const useRecorder = () => {
     const isProcessorActiveRef = useRef(false);
     const isStoppingRef = useRef(false);
     const videoElementRef = useRef<HTMLVideoElement | null>(null);
+    
+    // Typing Detection State
+    const lastKeyTimeRef = useRef<number>(0); // Timestamp of last key press
+    const typingTargetRef = useRef<{ x: number; y: number } | null>(null); // Last known caret position
+    const isTypingModeRef = useRef(false); // Whether we're currently in typing mode
+    const keydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null); // Store handler for cleanup
 
     useEffect(() => {
         // Init Wasm
@@ -142,6 +149,17 @@ export const useRecorder = () => {
 
             // Bring focus back to this window
             window.focus();
+            
+            // Remove keyboard event listener
+            if (keydownHandlerRef.current) {
+                window.removeEventListener('keydown', keydownHandlerRef.current);
+                keydownHandlerRef.current = null;
+            }
+            
+            // Reset typing state
+            isTypingModeRef.current = false;
+            typingTargetRef.current = null;
+            lastKeyTimeRef.current = 0;
 
             // Give time for any pending frame encoding to complete
             // This prevents race conditions where frames are still being encoded
@@ -347,6 +365,38 @@ export const useRecorder = () => {
             
             video.play();
             
+            // Keyboard Event Listener for Typing Zoom
+            const handleKeydown = (e: KeyboardEvent) => {
+                // Ignore certain keys that don't represent typing
+                const ignoredKeys = ['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'Escape', 
+                                     'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                                     'CapsLock', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 
+                                     'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
+                
+                if (ignoredKeys.includes(e.key)) {
+                    return;
+                }
+                
+                // Check if user is actively typing in an input element
+                if (isTypingActive()) {
+                    lastKeyTimeRef.current = Date.now();
+                    isTypingModeRef.current = true;
+                    
+                    // Try to get caret coordinates
+                    const caretPos = getCaretCoordinates();
+                    if (caretPos) {
+                        // Convert screen coordinates to video coordinates
+                        // Note: This is an approximation. In a real scenario, we'd need to account
+                        // for the display media's actual position on screen
+                        typingTargetRef.current = caretPos;
+                        console.log('🎯 Typing detected at caret position:', caretPos);
+                    }
+                }
+            };
+            
+            keydownHandlerRef.current = handleKeydown;
+            window.addEventListener('keydown', handleKeydown);
+            
             // Physics counter for smooth camera at 60fps while encoding at 30fps
             let physicsFrameCount = 0;
 
@@ -443,6 +493,14 @@ export const useRecorder = () => {
                         // Update history
                         prevDetectedTargetRef.current.x = detectedX;
                         prevDetectedTargetRef.current.y = detectedY;
+                        
+                        // Mouse motion overrides typing mode temporarily
+                        // If user moves mouse significantly while typing, prioritize mouse position
+                        if (isTypingModeRef.current && totalMass > MOTION_CONFIG.MIN_MASS) {
+                            // Only override if it's significant mouse motion
+                            isTypingModeRef.current = false;
+                            typingTargetRef.current = null;
+                        }
 
                         // Improved heuristics for detecting action vs scrolling
                         const widthChange = maxX - minX;
@@ -499,9 +557,29 @@ export const useRecorder = () => {
                 }
 
                 const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
+                const timeSinceTyping = Date.now() - lastKeyTimeRef.current;
 
-                if (timeSinceMotion > 2000) { // 2s idle
-                    // Zoom OUT
+                // Check if we're in typing mode (typing within last 2 seconds)
+                if (timeSinceTyping < 2000 && isTypingModeRef.current && typingTargetRef.current) {
+                    // PRIORITY: Typing mode - zoom in and follow the caret
+                    // Override motion detection to focus on text input
+                    rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+                    
+                    // Update target to caret position with smooth lerp
+                    // Use lerp to avoid jitter when typing rapidly
+                    const lerpFactor = 0.1; // Smooth following
+                    currentTargetRef.current.x = currentTargetRef.current.x + 
+                        (typingTargetRef.current.x - currentTargetRef.current.x) * lerpFactor;
+                    currentTargetRef.current.y = currentTargetRef.current.y + 
+                        (typingTargetRef.current.y - currentTargetRef.current.y) * lerpFactor;
+                } else if (timeSinceTyping >= 2000 && isTypingModeRef.current) {
+                    // Exit typing mode after 2 seconds of inactivity
+                    isTypingModeRef.current = false;
+                    typingTargetRef.current = null;
+                }
+
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current) { // 2s idle and not typing
+                    // Zoom OUT only if not in typing mode
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
