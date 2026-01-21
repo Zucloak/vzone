@@ -493,13 +493,36 @@ export const useRecorder = () => {
                         detectedY = avgY;
                         lastMotionTimeRef.current = Date.now();
 
-                        // Smooth target acquisition to prevent jitter and shaking
-                        // Apply lerp to the target position before physics system
-                        const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
-                        currentTargetRef.current.x = currentTargetRef.current.x + 
-                            (detectedX - currentTargetRef.current.x) * smoothing;
-                        currentTargetRef.current.y = currentTargetRef.current.y + 
-                            (detectedY - currentTargetRef.current.y) * smoothing;
+                        // Follow-cursor logic: When zoom is active, continuously track cursor position
+                        // This creates a smooth pan effect as the cursor moves
+                        if (zoomEnabledRef.current && rigRef.current.get_view_rect) {
+                            const view = rigRef.current.get_view_rect();
+                            const currentZoom = view.zoom || 1.0;
+                            
+                            // Only apply continuous tracking when actually zoomed in
+                            if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
+                                // Apply smooth target acquisition to prevent jitter
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                            } else {
+                                // When zoomed out, use heavier smoothing to avoid following every tiny motion
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.5;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                            }
+                        } else {
+                            // When zoom is not active, use standard smoothing
+                            const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.5;
+                            currentTargetRef.current.x = currentTargetRef.current.x + 
+                                (detectedX - currentTargetRef.current.x) * smoothing;
+                            currentTargetRef.current.y = currentTargetRef.current.y + 
+                                (detectedY - currentTargetRef.current.y) * smoothing;
+                        }
 
                         // Update history
                         prevDetectedTargetRef.current.x = detectedX;
@@ -560,9 +583,11 @@ export const useRecorder = () => {
                         // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
-                        // UNLESS a clear click is detected (override warmup for responsiveness)
-                        if (warmupFramesRef.current < 90 && !isLocalizedAction) {
+                        // Do NOT allow zoom during warmup period regardless of clicks
+                        if (warmupFramesRef.current < 90) {
                              rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                             // Don't enable zoom during warmup
+                             zoomEnabledRef.current = false;
                         } else {
                             if (isScrolling) {
                                 // Scrolling detected - ALWAYS zoom OUT to overview for context
@@ -573,7 +598,7 @@ export const useRecorder = () => {
                                 clickTimestampsRef.current = [];
                             } else if (isLocalizedAction && zoomEnabledRef.current) {
                                 // Focused action detected (click, type) - zoom in
-                                // Only triggers if NOT scrolling
+                                // Only triggers if NOT scrolling AND zoom is enabled
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                             }
                         }
