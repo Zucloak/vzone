@@ -5,6 +5,30 @@
  * for the Targeted Zoom System. This enables zooming to the text cursor when typing.
  */
 
+// Keys that should be ignored when detecting typing activity
+const IGNORED_KEYS = [
+    'Shift', 'Control', 'Alt', 'Meta', 'Tab', 'Escape',
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+    'CapsLock', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6',
+    'F7', 'F8', 'F9', 'F10', 'F11', 'F12'
+];
+
+// Cache for temporary measurement element (performance optimization)
+let measurementSpan: HTMLSpanElement | null = null;
+
+/**
+ * Get or create a reusable span element for text measurement
+ */
+function getMeasurementSpan(): HTMLSpanElement {
+    if (!measurementSpan) {
+        measurementSpan = document.createElement('span');
+        measurementSpan.style.position = 'absolute';
+        measurementSpan.style.visibility = 'hidden';
+        measurementSpan.style.whiteSpace = 'pre';
+    }
+    return measurementSpan;
+}
+
 /**
  * Get the screen coordinates of the text caret/cursor
  * 
@@ -40,16 +64,14 @@ export function getCaretCoordinates(): { x: number; y: number } | null {
             const value = activeElement.value || '';
             const selectionStart = activeElement.selectionStart || 0;
             
-            // Create temporary span to measure text width
-            const tempSpan = document.createElement('span');
-            tempSpan.style.font = computedStyle.font;
+            // Use cached measurement element for performance
+            const tempSpan = getMeasurementSpan();
+            
+            // Set individual font properties for better cross-browser compatibility
             tempSpan.style.fontSize = computedStyle.fontSize;
             tempSpan.style.fontFamily = computedStyle.fontFamily;
             tempSpan.style.fontWeight = computedStyle.fontWeight;
             tempSpan.style.letterSpacing = computedStyle.letterSpacing;
-            tempSpan.style.position = 'absolute';
-            tempSpan.style.visibility = 'hidden';
-            tempSpan.style.whiteSpace = 'pre';
             tempSpan.textContent = value.substring(0, selectionStart);
             
             document.body.appendChild(tempSpan);
@@ -71,6 +93,13 @@ export function getCaretCoordinates(): { x: number; y: number } | null {
     }
     
     return null;
+}
+
+/**
+ * Check if a key should be ignored for typing detection
+ */
+export function isIgnoredKey(key: string): boolean {
+    return IGNORED_KEYS.includes(key);
 }
 
 /**

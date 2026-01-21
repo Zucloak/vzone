@@ -1,7 +1,7 @@
 import type { BackgroundConfig, VideoQuality, DeviceCapability } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
-import { getCaretCoordinates, isTypingActive } from '../utils/caretTracking';
+import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/caretTracking';
 
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
@@ -18,6 +18,7 @@ const MOTION_CONFIG = {
     ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - ultra sensitive for immediate click detection
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
+    MOUSE_OVERRIDE_THRESHOLD: 2, // Minimum motion to override typing mode
     
     // Zoom levels
     ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
@@ -367,13 +368,8 @@ export const useRecorder = () => {
             
             // Keyboard Event Listener for Typing Zoom
             const handleKeydown = (e: KeyboardEvent) => {
-                // Ignore certain keys that don't represent typing
-                const ignoredKeys = ['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'Escape', 
-                                     'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-                                     'CapsLock', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 
-                                     'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
-                
-                if (ignoredKeys.includes(e.key)) {
+                // Ignore modifier and navigation keys that don't represent typing
+                if (isIgnoredKey(e.key)) {
                     return;
                 }
                 
@@ -385,11 +381,11 @@ export const useRecorder = () => {
                     // Try to get caret coordinates
                     const caretPos = getCaretCoordinates();
                     if (caretPos) {
-                        // Convert screen coordinates to video coordinates
-                        // Note: This is an approximation. In a real scenario, we'd need to account
-                        // for the display media's actual position on screen
+                        // NOTE: Screen coordinates are used directly.
+                        // For multi-monitor setups, this may need adjustment based on
+                        // the display media's actual screen position. This is a known
+                        // limitation documented in TARGETED_ZOOM_IMPLEMENTATION.md
                         typingTargetRef.current = caretPos;
-                        console.log('🎯 Typing detected at caret position:', caretPos);
                     }
                 }
             };
@@ -496,7 +492,7 @@ export const useRecorder = () => {
                         
                         // Mouse motion overrides typing mode temporarily
                         // If user moves mouse significantly while typing, prioritize mouse position
-                        if (isTypingModeRef.current && totalMass > MOTION_CONFIG.MIN_MASS) {
+                        if (isTypingModeRef.current && totalMass > MOTION_CONFIG.MOUSE_OVERRIDE_THRESHOLD) {
                             // Only override if it's significant mouse motion
                             isTypingModeRef.current = false;
                             typingTargetRef.current = null;
