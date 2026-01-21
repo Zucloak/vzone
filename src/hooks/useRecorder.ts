@@ -25,7 +25,8 @@ const MOTION_CONFIG = {
     MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom
     
     // Smoothing
-    TARGET_SMOOTHING: 0.25,     // Lerp factor for target position (0.25 = responsive, balanced)
+    TARGET_SMOOTHING: 0.4,      // Lerp factor for target position (0.4 = very responsive)
+    TARGET_SMOOTHING_CLICK: 1.0, // No smoothing on clicks (instant snap)
     
     // Zoom levels
     ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
@@ -493,35 +494,61 @@ export const useRecorder = () => {
                         detectedY = avgY;
                         lastMotionTimeRef.current = Date.now();
 
+                        // Calculate action characteristics once (used for both positioning and click detection)
+                        const widthChange = maxX - minX;
+                        const heightChange = maxY - minY;
+                        const changeArea = widthChange * heightChange;
+                        const isCompact = widthChange < 20 && heightChange < 10;
+                        const isVerticalMove = heightChange > widthChange * 1.5;
+                        const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
+                        const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
+                        const isScrolling = hasVerticalScroll && hasWideArea;
+                        
+                        const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
+                                             totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                             isCompact && !isVerticalMove && !isScrolling;
+
                         // Follow-cursor logic: When zoom is active, continuously track cursor position
-                        // This creates a smooth pan effect as the cursor moves
+                        // Use instant positioning on clicks, smooth tracking for cursor movement
                         if (zoomEnabledRef.current && rigRef.current.get_view_rect) {
                             const view = rigRef.current.get_view_rect();
                             const currentZoom = view.zoom || 1.0;
                             
-                            // Only apply continuous tracking when actually zoomed in
-                            if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
-                                // Apply smooth target acquisition to prevent jitter
+                            // Instant snap to position on click actions for immediate response
+                            if (isClickAction) {
+                                // No lerp - instant positioning on clicks
+                                currentTargetRef.current.x = detectedX;
+                                currentTargetRef.current.y = detectedY;
+                            } else if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
+                                // Apply high smoothing for responsive cursor following when zoomed
                                 const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
                                     (detectedX - currentTargetRef.current.x) * smoothing;
                                 currentTargetRef.current.y = currentTargetRef.current.y + 
                                     (detectedY - currentTargetRef.current.y) * smoothing;
                             } else {
-                                // When zoomed out, use heavier smoothing to avoid following every tiny motion
-                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.5;
+                                // When zoomed out, use moderate smoothing
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.6;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
                                     (detectedX - currentTargetRef.current.x) * smoothing;
                                 currentTargetRef.current.y = currentTargetRef.current.y + 
                                     (detectedY - currentTargetRef.current.y) * smoothing;
                             }
                         } else {
-                            // When zoom is not active, use standard smoothing
-                            const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.5;
-                            currentTargetRef.current.x = currentTargetRef.current.x + 
-                                (detectedX - currentTargetRef.current.x) * smoothing;
-                            currentTargetRef.current.y = currentTargetRef.current.y + 
-                                (detectedY - currentTargetRef.current.y) * smoothing;
+                            // When zoom is not active yet
+                            if (isClickAction) {
+                                // Instant snap on clicks even before zoom is fully active
+                                // This pre-positions the camera for when zoom activates
+                                currentTargetRef.current.x = detectedX;
+                                currentTargetRef.current.y = detectedY;
+                            } else {
+                                // Use lighter smoothing for non-click movement
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.3;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                            }
                         }
 
                         // Update history
@@ -536,33 +563,9 @@ export const useRecorder = () => {
                             typingTargetRef.current = null;
                         }
 
-                        // Improved heuristics for detecting action vs scrolling
-                        const widthChange = maxX - minX;
-                        const heightChange = maxY - minY;
-                        const changeArea = widthChange * heightChange;
-                        
-                        // Scrolling detection: VERY lenient for reliable detection
-                        // Even small vertical scrolls should trigger zoom out
-                        const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
-                        const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA; // Just needs to be bigger than click area
-                        const isScrolling = hasVerticalScroll && hasWideArea;
-                        
-                        // Localized action: MUST be small focused area
-                        // This prevents any scroll from being misclassified as a click
-                        // Stricter height check (10) to avoid vertical scrolls being detected as clicks
-                        const isCompact = widthChange < 20 && heightChange < 10;
-
-                        // Vertical movement check: if change is mostly vertical, it's likely a scroll/mouse move
-                        const isVerticalMove = heightChange > widthChange * 1.5;
-
-                        const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
-                                                 totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                                 isCompact && // Must be compact to be a click
-                                                 !isVerticalMove && // Reject mostly vertical moves (scrolls)
-                                                 !isScrolling; // Explicitly exclude scrolling
-
                         // Click tracking: Add timestamp when a localized action is detected
-                        if (isLocalizedAction) {
+                        // (isClickAction is the same as isLocalizedAction)
+                        if (isClickAction) {
                             const now = Date.now();
                             clickTimestampsRef.current.push(now);
                             
@@ -596,7 +599,7 @@ export const useRecorder = () => {
                                 // Reset zoom enablement on scroll
                                 zoomEnabledRef.current = false;
                                 clickTimestampsRef.current = [];
-                            } else if (isLocalizedAction && zoomEnabledRef.current) {
+                            } else if (isClickAction && zoomEnabledRef.current) {
                                 // Focused action detected (click, type) - zoom in
                                 // Only triggers if NOT scrolling AND zoom is enabled
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
