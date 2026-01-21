@@ -412,6 +412,15 @@ export const useRecorder = () => {
                 if (!isProcessorActiveRef.current) return;
                 
                 warmupFramesRef.current++;
+                
+                // Performance optimization: Skip expensive motion detection during warmup
+                // Since zoom is disabled anyway, we don't need to track cursor
+                const isWarmupPeriod = warmupFramesRef.current < 90;
+                
+                // Log warmup completion for debugging
+                if (warmupFramesRef.current === 90) {
+                    console.log("✅ Warmup period complete - full motion tracking enabled");
+                }
 
                 // Check if video is still valid and has data
                 if (!video || video.readyState < 2) {
@@ -442,7 +451,8 @@ export const useRecorder = () => {
                 let detectedX = currentTargetRef.current.x;
                 let detectedY = currentTargetRef.current.y;
 
-                if (motionContextRef.current && prevFrameDataRef.current) {
+                // Skip motion detection during warmup period for performance
+                if (!isWarmupPeriod && motionContextRef.current && prevFrameDataRef.current) {
                     const mCtx = motionContextRef.current;
                     // Draw small frame
                     mCtx.drawImage(video, 0, 0, 64, 36);
@@ -645,9 +655,17 @@ export const useRecorder = () => {
                 const targetX = currentTargetRef.current.x;
                 const targetY = currentTargetRef.current.y;
 
-                // Update Physics at 60fps for buttery smooth camera movement
-                // Even though we encode at 30fps, smooth physics makes the experience feel responsive
-                rigRef.current.update(targetX, targetY, 1 / 60);
+                // Optimize physics during warmup - use lower frame rate since camera isn't moving
+                if (isWarmupPeriod) {
+                    // During warmup, update physics at lower rate (30fps instead of 60fps)
+                    // This reduces CPU load when encoder is starting up
+                    if (physicsFrameCount % 2 === 0) {
+                        rigRef.current.update(targetX, targetY, 1 / 30);
+                    }
+                } else {
+                    // After warmup: Update Physics at 60fps for buttery smooth camera movement
+                    rigRef.current.update(targetX, targetY, 1 / 60);
+                }
                 const view = rigRef.current.get_view_rect();
                 
                 physicsFrameCount++;
