@@ -1,6 +1,7 @@
 import type { BackgroundConfig, VideoQuality, DeviceCapability } from '../types';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import init, { CameraRig, Mp4Muxer } from '../../recorder_core/pkg/recorder_core';
+import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/caretTracking';
 
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
@@ -17,6 +18,15 @@ const MOTION_CONFIG = {
     ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - ultra sensitive for immediate click detection
     ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
+    MOUSE_OVERRIDE_THRESHOLD: 2, // Minimum motion to override typing mode
+    
+    // Click tracking (Cursorful-style multi-click trigger)
+    CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
+    MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom
+    
+    // Smoothing
+    TARGET_SMOOTHING: 0.4,      // Lerp factor for target position (0.4 = very responsive)
+    TARGET_SMOOTHING_CLICK: 1.0, // No smoothing on clicks (instant snap)
     
     // Zoom levels
     ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
@@ -63,6 +73,16 @@ export const useRecorder = () => {
     const isProcessorActiveRef = useRef(false);
     const isStoppingRef = useRef(false);
     const videoElementRef = useRef<HTMLVideoElement | null>(null);
+    
+    // Typing Detection State
+    const lastKeyTimeRef = useRef<number>(0); // Timestamp of last key press
+    const typingTargetRef = useRef<{ x: number; y: number } | null>(null); // Last known caret position
+    const isTypingModeRef = useRef(false); // Whether we're currently in typing mode
+    const keydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null); // Store handler for cleanup
+    
+    // Click Tracking State (Cursorful-style multi-click trigger)
+    const clickTimestampsRef = useRef<number[]>([]); // Track timestamps of recent clicks
+    const zoomEnabledRef = useRef(false); // Whether zoom is enabled (2+ clicks detected)
 
     useEffect(() => {
         // Init Wasm
@@ -142,6 +162,17 @@ export const useRecorder = () => {
 
             // Bring focus back to this window
             window.focus();
+            
+            // Remove keyboard event listener
+            if (keydownHandlerRef.current) {
+                window.removeEventListener('keydown', keydownHandlerRef.current);
+                keydownHandlerRef.current = null;
+            }
+            
+            // Reset typing state
+            isTypingModeRef.current = false;
+            typingTargetRef.current = null;
+            lastKeyTimeRef.current = 0;
 
             // Give time for any pending frame encoding to complete
             // This prevents race conditions where frames are still being encoded
@@ -347,6 +378,33 @@ export const useRecorder = () => {
             
             video.play();
             
+            // Keyboard Event Listener for Typing Zoom
+            const handleKeydown = (e: KeyboardEvent) => {
+                // Ignore modifier and navigation keys that don't represent typing
+                if (isIgnoredKey(e.key)) {
+                    return;
+                }
+                
+                // Check if user is actively typing in an input element
+                if (isTypingActive()) {
+                    lastKeyTimeRef.current = Date.now();
+                    isTypingModeRef.current = true;
+                    
+                    // Try to get caret coordinates
+                    const caretPos = getCaretCoordinates();
+                    if (caretPos) {
+                        // NOTE: Screen coordinates are used directly.
+                        // For multi-monitor setups, this may need adjustment based on
+                        // the display media's actual screen position. This is a known
+                        // limitation documented in TARGETED_ZOOM_IMPLEMENTATION.md
+                        typingTargetRef.current = caretPos;
+                    }
+                }
+            };
+            
+            keydownHandlerRef.current = handleKeydown;
+            window.addEventListener('keydown', handleKeydown);
+            
             // Physics counter for smooth camera at 60fps while encoding at 30fps
             let physicsFrameCount = 0;
 
@@ -354,6 +412,15 @@ export const useRecorder = () => {
                 if (!isProcessorActiveRef.current) return;
                 
                 warmupFramesRef.current++;
+                
+                // Performance optimization: Skip expensive motion detection during warmup
+                // Since zoom is disabled anyway, we don't need to track cursor
+                const isWarmupPeriod = warmupFramesRef.current < 90;
+                
+                // Log warmup completion for debugging
+                if (warmupFramesRef.current === 90) {
+                    console.log("✅ Warmup period complete - full motion tracking enabled");
+                }
 
                 // Check if video is still valid and has data
                 if (!video || video.readyState < 2) {
@@ -384,7 +451,8 @@ export const useRecorder = () => {
                 let detectedX = currentTargetRef.current.x;
                 let detectedY = currentTargetRef.current.y;
 
-                if (motionContextRef.current && prevFrameDataRef.current) {
+                // Skip motion detection during warmup period for performance
+                if (!isWarmupPeriod && motionContextRef.current && prevFrameDataRef.current) {
                     const mCtx = motionContextRef.current;
                     // Draw small frame
                     mCtx.drawImage(video, 0, 0, 64, 36);
@@ -436,56 +504,114 @@ export const useRecorder = () => {
                         detectedY = avgY;
                         lastMotionTimeRef.current = Date.now();
 
-                        // Faster target acquisition, physics handles smoothing
-                        currentTargetRef.current.x = detectedX;
-                        currentTargetRef.current.y = detectedY;
+                        // Calculate action characteristics once (used for both positioning and click detection)
+                        const widthChange = maxX - minX;
+                        const heightChange = maxY - minY;
+                        const changeArea = widthChange * heightChange;
+                        const isCompact = widthChange < 20 && heightChange < 10;
+                        const isVerticalMove = heightChange > widthChange * 1.5;
+                        const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
+                        const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
+                        const isScrolling = hasVerticalScroll && hasWideArea;
+                        
+                        const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
+                                             totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                             isCompact && !isVerticalMove && !isScrolling;
+
+                        // Follow-cursor logic: When zoom is active, continuously track cursor position
+                        // Use instant positioning on clicks, smooth tracking for cursor movement
+                        if (zoomEnabledRef.current && rigRef.current.get_view_rect) {
+                            const view = rigRef.current.get_view_rect();
+                            const currentZoom = view.zoom || 1.0;
+                            
+                            // Instant snap to position on click actions for immediate response
+                            if (isClickAction) {
+                                // No lerp - instant positioning on clicks
+                                currentTargetRef.current.x = detectedX;
+                                currentTargetRef.current.y = detectedY;
+                            } else if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
+                                // Apply high smoothing for responsive cursor following when zoomed
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                            } else {
+                                // When zoomed out, use moderate smoothing
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.6;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                            }
+                        } else {
+                            // When zoom is not active yet
+                            if (isClickAction) {
+                                // Instant snap on clicks even before zoom is fully active
+                                // This pre-positions the camera for when zoom activates
+                                currentTargetRef.current.x = detectedX;
+                                currentTargetRef.current.y = detectedY;
+                            } else {
+                                // Use lighter smoothing for non-click movement
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.3;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                            }
+                        }
 
                         // Update history
                         prevDetectedTargetRef.current.x = detectedX;
                         prevDetectedTargetRef.current.y = detectedY;
-
-                        // Improved heuristics for detecting action vs scrolling
-                        const widthChange = maxX - minX;
-                        const heightChange = maxY - minY;
-                        const changeArea = widthChange * heightChange;
                         
-                        // Scrolling detection: VERY lenient for reliable detection
-                        // Even small vertical scrolls should trigger zoom out
-                        const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
-                        const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA; // Just needs to be bigger than click area
-                        const isScrolling = hasVerticalScroll && hasWideArea;
-                        
-                        // Localized action: MUST be small focused area
-                        // This prevents any scroll from being misclassified as a click
-                        // Stricter height check (10) to avoid vertical scrolls being detected as clicks
-                        const isCompact = widthChange < 20 && heightChange < 10;
+                        // Mouse motion overrides typing mode temporarily
+                        // If user moves mouse significantly while typing, prioritize mouse position
+                        if (isTypingModeRef.current && totalMass > MOTION_CONFIG.MOUSE_OVERRIDE_THRESHOLD) {
+                            // Only override if it's significant mouse motion
+                            isTypingModeRef.current = false;
+                            typingTargetRef.current = null;
+                        }
 
-                        // Vertical movement check: if change is mostly vertical, it's likely a scroll/mouse move
-                        const isVerticalMove = heightChange > widthChange * 1.5;
-
-                        const isLocalizedAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
-                                                 totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                                 isCompact && // Must be compact to be a click
-                                                 !isVerticalMove && // Reject mostly vertical moves (scrolls)
-                                                 !isScrolling; // Explicitly exclude scrolling
+                        // Click tracking: Add timestamp when a localized action is detected
+                        // (isClickAction is the same as isLocalizedAction)
+                        if (isClickAction) {
+                            const now = Date.now();
+                            clickTimestampsRef.current.push(now);
+                            
+                            // Remove old clicks outside the time window
+                            clickTimestampsRef.current = clickTimestampsRef.current.filter(
+                                timestamp => now - timestamp < MOTION_CONFIG.CLICK_WINDOW_MS
+                            );
+                            
+                            // Enable zoom if we have 2+ clicks within the window
+                            if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
+                                zoomEnabledRef.current = true;
+                            }
+                        }
 
                         // Smart Autozoom with clear priority:
                         // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
-                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions)
+                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions) - ONLY if zoom enabled
                         // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
-                        // UNLESS a clear click is detected (override warmup for responsiveness)
-                        if (warmupFramesRef.current < 90 && !isLocalizedAction) {
+                        // Do NOT allow zoom during warmup period regardless of clicks
+                        if (warmupFramesRef.current < 90) {
                              rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
+                             // Don't enable zoom during warmup
+                             zoomEnabledRef.current = false;
                         } else {
                             if (isScrolling) {
                                 // Scrolling detected - ALWAYS zoom OUT to overview for context
                                 // This takes absolute priority over everything else
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                            } else if (isLocalizedAction) {
+                                // Reset zoom enablement on scroll
+                                zoomEnabledRef.current = false;
+                                clickTimestampsRef.current = [];
+                            } else if (isClickAction && zoomEnabledRef.current) {
                                 // Focused action detected (click, type) - zoom in
-                                // Only triggers if NOT scrolling
+                                // Only triggers if NOT scrolling AND zoom is enabled
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                             }
                         }
@@ -499,9 +625,29 @@ export const useRecorder = () => {
                 }
 
                 const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
+                const timeSinceTyping = Date.now() - lastKeyTimeRef.current;
 
-                if (timeSinceMotion > 2000) { // 2s idle
-                    // Zoom OUT
+                // Check if we're in typing mode (typing within last 2 seconds)
+                if (timeSinceTyping < 2000 && isTypingModeRef.current && typingTargetRef.current) {
+                    // PRIORITY: Typing mode - zoom in and follow the caret
+                    // Override motion detection to focus on text input
+                    rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+                    
+                    // Update target to caret position with smooth lerp
+                    // Use same smoothing factor as motion detection for consistency
+                    const lerpFactor = MOTION_CONFIG.TARGET_SMOOTHING;
+                    currentTargetRef.current.x = currentTargetRef.current.x + 
+                        (typingTargetRef.current.x - currentTargetRef.current.x) * lerpFactor;
+                    currentTargetRef.current.y = currentTargetRef.current.y + 
+                        (typingTargetRef.current.y - currentTargetRef.current.y) * lerpFactor;
+                } else if (timeSinceTyping >= 2000 && isTypingModeRef.current) {
+                    // Exit typing mode after 2 seconds of inactivity
+                    isTypingModeRef.current = false;
+                    typingTargetRef.current = null;
+                }
+
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current) { // 2s idle and not typing
+                    // Zoom OUT only if not in typing mode
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
@@ -509,9 +655,17 @@ export const useRecorder = () => {
                 const targetX = currentTargetRef.current.x;
                 const targetY = currentTargetRef.current.y;
 
-                // Update Physics at 60fps for buttery smooth camera movement
-                // Even though we encode at 30fps, smooth physics makes the experience feel responsive
-                rigRef.current.update(targetX, targetY, 1 / 60);
+                // Optimize physics during warmup - use lower frame rate since camera isn't moving
+                if (isWarmupPeriod) {
+                    // During warmup, update physics at lower rate (30fps instead of 60fps)
+                    // This reduces CPU load when encoder is starting up
+                    if (physicsFrameCount % 2 === 0) {
+                        rigRef.current.update(targetX, targetY, 1 / 30);
+                    }
+                } else {
+                    // After warmup: Update Physics at 60fps for buttery smooth camera movement
+                    rigRef.current.update(targetX, targetY, 1 / 60);
+                }
                 const view = rigRef.current.get_view_rect();
                 
                 physicsFrameCount++;
