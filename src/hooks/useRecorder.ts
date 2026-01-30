@@ -33,8 +33,8 @@ const MOTION_CONFIG = {
     ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
 } as const;
 
-// Encoder timing constants
-const ENCODER_SETTLE_DELAY_MS = 300; // Delay to allow pending frames to complete encoding
+// Encoder output callback processing delay (brief wait after flush for callbacks to complete)
+const ENCODER_OUTPUT_DELAY_MS = 50;
 
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
@@ -174,14 +174,9 @@ export const useRecorder = () => {
             typingTargetRef.current = null;
             lastKeyTimeRef.current = 0;
 
-            // Give time for any pending frame encoding to complete
-            // This prevents race conditions where frames are still being encoded
-            // when we try to flush/close the encoder
-            console.log(`⏳ Waiting ${ENCODER_SETTLE_DELAY_MS}ms for in-flight frames to complete...`);
-            await new Promise(resolve => setTimeout(resolve, ENCODER_SETTLE_DELAY_MS));
-
-            // Flush and Close Encoder with improved error handling
-            // CRITICAL: Keep canvas and stream alive until encoder is fully closed
+            // CRITICAL: Flush encoder IMMEDIATELY before it can auto-close
+            // When the video track ends, some browsers will close the encoder
+            // So we must flush right away to capture all pending output
             if (videoEncoderRef.current) {
                 try {
                     const encoderState = videoEncoderRef.current.state;
@@ -192,7 +187,7 @@ export const useRecorder = () => {
                         console.log("Encoder flushed successfully");
                     }
                     
-                    // Check state again after flush
+                    // Close encoder after flush
                     if (videoEncoderRef.current.state !== 'closed') {
                         videoEncoderRef.current.close();
                         console.log("Encoder closed successfully");
@@ -210,6 +205,10 @@ export const useRecorder = () => {
                 }
                 videoEncoderRef.current = null;
             }
+
+            // Brief delay to ensure all encoder output callbacks have fired
+            // This is much shorter than before since we already flushed
+            await new Promise(resolve => setTimeout(resolve, ENCODER_OUTPUT_DELAY_MS));
 
             // Finalize muxer BEFORE stopping stream and UI updates
             // The muxer needs to finish writing before we clean up everything
@@ -313,8 +312,10 @@ export const useRecorder = () => {
             // Initialize VideoEncoder with robust configuration for animated content
             const encoder = new VideoEncoder({
                 output: (chunk, metadata) => {
-                    // Only process output if we're still actively recording
-                    if (!isProcessorActiveRef.current) return;
+                    // ALWAYS process encoder output, even during shutdown
+                    // The encoder's flush() will ensure all pending chunks are processed
+                    // before we finalize the muxer. Discarding output here caused the
+                    // "Muxer was null" bug where chunks with decoderConfig were dropped.
                     
                     // Lazy init Muxer once we have the codec config (SPS/PPS)
                     if (!muxerRef.current && metadata?.decoderConfig?.description) {
