@@ -314,17 +314,22 @@ export const useRecorder = () => {
                 output: (chunk, metadata) => {
                     // ALWAYS process encoder output, even during shutdown
                     // The encoder's flush() will ensure all pending chunks are processed
-                    // before we finalize the muxer. Discarding output here caused the
-                    // "Muxer was null" bug where chunks with decoderConfig were dropped.
+                    // before we finalize the muxer.
+                    
+                    // Log first output for debugging
+                    if (!muxerRef.current) {
+                        console.log(`📦 Encoder output received: chunk type=${chunk.type}, size=${chunk.byteLength}, hasDescription=${!!metadata?.decoderConfig?.description}`);
+                    }
                     
                     // Lazy init Muxer once we have the codec config (SPS/PPS)
                     if (!muxerRef.current && metadata?.decoderConfig?.description) {
                         const description = new Uint8Array(metadata.decoderConfig.description as ArrayBuffer);
-                        console.log("Initializing Muxer with AVCC config, length:", description.length);
+                        console.log("✅ Initializing Muxer with AVCC config, length:", description.length);
                         try {
                             muxerRef.current = new Mp4Muxer(width, height, description);
+                            console.log("✅ Muxer initialized successfully");
                         } catch (e) {
-                            console.error("Failed to create Muxer:", e);
+                            console.error("❌ Failed to create Muxer:", e);
                             return;
                         }
                     }
@@ -343,7 +348,7 @@ export const useRecorder = () => {
                 error: (e) => {
                     // Only log error if we're not already stopping (expected during shutdown)
                     if (isProcessorActiveRef.current) {
-                        console.error("VideoEncoder error:", e);
+                        console.error("❌ VideoEncoder error:", e);
                     } else {
                         console.log("VideoEncoder error during shutdown (expected):", e.message);
                     }
@@ -353,27 +358,35 @@ export const useRecorder = () => {
                 },
             });
 
-            // Configure encoder with INDUSTRY-STANDARD settings for professional quality
-            // High Profile Level 4.2 (64002a) supports 1080p60 with excellent compression
-            // Optimized for screen recording with high detail preservation
+            // Configure encoder with settings optimized for screen recording
+            // Use 'realtime' latency mode to ensure frames are output immediately
+            // This prevents the encoder from buffering too many frames which can cause
+            // issues when the video track ends abruptly
 
-            // Industry-standard bitrate selection (YouTube/Vimeo recommended levels)
-            // Screen content needs higher bitrates than natural video due to sharp edges/text
-            let targetBitrate = 16_000_000; // Default Highest: 16 Mbps (YouTube 1080p recommended)
-            if (quality === 'high') targetBitrate = 10_000_000; // High: 10 Mbps (good quality)
-            if (quality === 'low') targetBitrate = 5_000_000;   // Low: 5 Mbps (acceptable quality)
+            // Bitrate selection based on quality setting
+            // Higher bitrates for screen content which has sharp edges and text
+            let targetBitrate = 12_000_000; // Default Highest: 12 Mbps (good for 1080p screen content)
+            if (quality === 'high') targetBitrate = 8_000_000; // High: 8 Mbps
+            if (quality === 'low') targetBitrate = 4_000_000;   // Low: 4 Mbps
 
-            console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps`);
+            console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps, Resolution=${width}x${height}`);
 
+            // Use Baseline Profile Level 4.0 for 1080p support with maximum compatibility
+            // Level 4.0 supports up to 1920x1080 at 30fps (needed for full HD recording)
+            // Using 'prefer-software' and 'realtime' to ensure immediate, reliable output
+            // Some hardware encoders buffer frames aggressively which causes issues when
+            // the video track ends abruptly (muxer never gets initialized)
             encoder.configure({
-                codec: 'avc1.64002a', // High Profile, Level 4.2 - better quality for 1080p content
+                codec: 'avc1.420028', // Baseline Profile, Level 4.0 - supports 1080p30
                 width: width,
                 height: height,
                 bitrate: targetBitrate,
-                framerate: 30, // 30fps for smooth recording
-                hardwareAcceleration: 'prefer-hardware', // Hardware encoding for performance
-                latencyMode: 'quality', // Quality mode prioritizes visual fidelity over latency
+                framerate: 30,
+                hardwareAcceleration: 'prefer-software', // More reliable output than hardware encoding
+                latencyMode: 'realtime', // CRITICAL: Output frames immediately, don't buffer
             });
+            
+            console.log(`✅ Encoder configured, state: ${encoder.state}`);
             videoEncoderRef.current = encoder;
 
             // Setup Render Loop
