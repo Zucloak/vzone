@@ -280,7 +280,18 @@ export const useRecorder = () => {
             setStream(displayMedia);
             setPreviewBlobUrl(null);
             warmupFramesRef.current = 0; // Reset warmup counter
+            frameCountRef.current = 0; // Reset frame counter for new recording
+            startTimeRef.current = 0; // Reset start time for new recording timestamps
             lastMotionTimeRef.current = Date.now();
+            
+            // Reset click tracking state for new recording
+            clickTimestampsRef.current = [];
+            zoomEnabledRef.current = false;
+            
+            // Reset typing state for clean start
+            lastKeyTimeRef.current = 0;
+            isTypingModeRef.current = false;
+            typingTargetRef.current = null;
 
             const track = displayMedia.getVideoTracks()[0];
             const settings = track.getSettings();
