@@ -6,30 +6,30 @@ import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/care
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 10,              // RGB diff threshold (lower = more sensitive)
-    MIN_MASS: 2,                // Minimum changed pixels to register motion
+    THRESHOLD: 15,              // RGB diff threshold (higher = less sensitive to noise)
+    MIN_MASS: 4,                // Minimum changed pixels to register motion (increased for noise reduction)
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 5,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
-    SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 150,  // Max area for click/type actions (pixels²) - tight for precise detection
+    SCROLL_HEIGHT_THRESHOLD: 6,  // Height change indicating scroll (out of 36 pixels) - higher = stricter scroll detection
+    SCROLL_WIDTH_THRESHOLD: 45,  // Width change indicating scroll (out of 64 pixels) - higher = stricter
+    LOCALIZED_ACTION_AREA: 100,  // Max area for click/type actions (pixels²) - tighter for precise click detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - ultra sensitive for immediate click detection
-    ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
-    ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
-    MOUSE_OVERRIDE_THRESHOLD: 2, // Minimum motion to override typing mode
+    ZOOM_MIN_MASS: 5,           // Minimum mass to trigger zoom - higher to prevent false triggers
+    ZOOM_MAX_VELOCITY: 60,      // Max velocity for zoom-in (pixels/frame) - lower for stability
+    ZOOM_OUT_VELOCITY: 80,      // Velocity threshold for zoom-out
+    MOUSE_OVERRIDE_THRESHOLD: 4, // Minimum motion to override typing mode (increased)
     
-    // Click tracking (Cursorful-style multi-click trigger)
-    CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
-    MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom
+    // Click tracking (Cursorful-style multi-click trigger - STRICTER for fewer false positives)
+    CLICK_WINDOW_MS: 2000,      // Time window for click tracking (2 seconds - tighter window)
+    MIN_CLICKS_TO_ZOOM: 3,      // Minimum clicks required to trigger zoom (3 clicks for intentional trigger)
     
     // Smoothing
-    TARGET_SMOOTHING: 0.4,      // Lerp factor for target position (0.4 = very responsive)
-    TARGET_SMOOTHING_CLICK: 1.0, // No smoothing on clicks (instant snap)
+    TARGET_SMOOTHING: 0.3,      // Lerp factor for target position (0.3 = responsive but stable)
+    TARGET_SMOOTHING_CLICK: 0.8, // Slight smoothing on clicks (prevents jarring snaps)
     
     // Zoom levels
-    ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
+    ZOOM_IN_LEVEL: 1.6,         // Zoom level for focused actions (1.6x = less aggressive)
     ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
 } as const;
 
@@ -341,25 +341,26 @@ export const useRecorder = () => {
                 },
             });
 
-            // Configure encoder with settings optimized for performance and quality balance
-            // High Profile Level 4.0 (640028) supports 1080p resolution
-            // Hardware acceleration required to offload encoding to GPU for smooth recording
+            // Configure encoder with INDUSTRY-STANDARD settings for professional quality
+            // High Profile Level 4.2 (64002a) supports 1080p60 with excellent compression
+            // Optimized for screen recording with high detail preservation
 
-            // Bitrate selection based on quality
-            let targetBitrate = 8_000_000; // Default Highest
-            if (quality === 'high') targetBitrate = 4_000_000;
-            if (quality === 'low') targetBitrate = 2_000_000;
+            // Industry-standard bitrate selection (YouTube/Vimeo recommended levels)
+            // Screen content needs higher bitrates than natural video due to sharp edges/text
+            let targetBitrate = 16_000_000; // Default Highest: 16 Mbps (YouTube 1080p recommended)
+            if (quality === 'high') targetBitrate = 10_000_000; // High: 10 Mbps (good quality)
+            if (quality === 'low') targetBitrate = 5_000_000;   // Low: 5 Mbps (acceptable quality)
 
             console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps`);
 
             encoder.configure({
-                codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
+                codec: 'avc1.64002a', // High Profile, Level 4.2 - better quality for 1080p content
                 width: width,
                 height: height,
                 bitrate: targetBitrate,
-                framerate: 30, // 30fps for smooth recording without laggy performance
-                hardwareAcceleration: 'prefer-hardware', // Prefer hardware encoding for better performance
-                latencyMode: 'realtime', // Realtime mode for responsive encoding
+                framerate: 30, // 30fps for smooth recording
+                hardwareAcceleration: 'prefer-hardware', // Hardware encoding for performance
+                latencyMode: 'quality', // Quality mode prioritizes visual fidelity over latency
             });
             videoEncoderRef.current = encoder;
 
@@ -508,29 +509,34 @@ export const useRecorder = () => {
                         const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
-                        const isCompact = widthChange < 20 && heightChange < 10;
-                        const isVerticalMove = heightChange > widthChange * 1.5;
+                        // STRICTER click detection: smaller area, more compact shape
+                        const isCompact = widthChange < 15 && heightChange < 8; // Tighter bounds
+                        const isVerticalMove = heightChange > widthChange * 1.2; // Stricter: excludes more vertical motions from clicks
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
                         const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
                         const isScrolling = hasVerticalScroll && hasWideArea;
                         
+                        // Stricter click detection: requires VERY compact motion pattern
                         const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
-                                             totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                             totalMass >= MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                             totalMass < 50 && // Upper bound to reject large motions
                                              isCompact && !isVerticalMove && !isScrolling;
 
                         // Follow-cursor logic: When zoom is active, continuously track cursor position
-                        // Use instant positioning on clicks, smooth tracking for cursor movement
+                        // Use smooth transitions on all movements to eliminate jarring "click" feel
                         if (zoomEnabledRef.current && rigRef.current.get_view_rect) {
                             const view = rigRef.current.get_view_rect();
                             const currentZoom = view.zoom || 1.0;
                             
-                            // Instant snap to position on click actions for immediate response
+                            // Smooth click positioning - faster but not instant for natural feel
                             if (isClickAction) {
-                                // No lerp - instant positioning on clicks
-                                currentTargetRef.current.x = detectedX;
-                                currentTargetRef.current.y = detectedY;
+                                const clickSmoothing = MOTION_CONFIG.TARGET_SMOOTHING_CLICK;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * clickSmoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * clickSmoothing;
                             } else if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
-                                // Apply high smoothing for responsive cursor following when zoomed
+                                // Apply smoothing for responsive cursor following when zoomed
                                 const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
                                     (detectedX - currentTargetRef.current.x) * smoothing;
@@ -538,22 +544,24 @@ export const useRecorder = () => {
                                     (detectedY - currentTargetRef.current.y) * smoothing;
                             } else {
                                 // When zoomed out, use moderate smoothing
-                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.6;
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.5;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
                                     (detectedX - currentTargetRef.current.x) * smoothing;
                                 currentTargetRef.current.y = currentTargetRef.current.y + 
                                     (detectedY - currentTargetRef.current.y) * smoothing;
                             }
                         } else {
-                            // When zoom is not active yet
+                            // When zoom is not active yet - use gentle smoothing
                             if (isClickAction) {
-                                // Instant snap on clicks even before zoom is fully active
-                                // This pre-positions the camera for when zoom activates
-                                currentTargetRef.current.x = detectedX;
-                                currentTargetRef.current.y = detectedY;
+                                // Smooth pre-positioning on clicks before zoom activates
+                                const clickSmoothing = MOTION_CONFIG.TARGET_SMOOTHING_CLICK * 0.6;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * clickSmoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * clickSmoothing;
                             } else {
                                 // Use lighter smoothing for non-click movement
-                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.3;
+                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.25;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
                                     (detectedX - currentTargetRef.current.x) * smoothing;
                                 currentTargetRef.current.y = currentTargetRef.current.y + 
@@ -584,7 +592,7 @@ export const useRecorder = () => {
                                 timestamp => now - timestamp < MOTION_CONFIG.CLICK_WINDOW_MS
                             );
                             
-                            // Enable zoom if we have 2+ clicks within the window
+                            // Enable zoom if we have 3+ clicks within the window
                             if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
                                 zoomEnabledRef.current = true;
                             }
