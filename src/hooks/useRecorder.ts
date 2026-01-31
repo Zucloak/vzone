@@ -6,35 +6,39 @@ import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/care
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 10,              // RGB diff threshold (lower = more sensitive)
-    MIN_MASS: 2,                // Minimum changed pixels to register motion
+    THRESHOLD: 15,              // RGB diff threshold (higher = less sensitive to noise)
+    MIN_MASS: 4,                // Minimum changed pixels to register motion (increased for noise reduction)
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 5,  // Height change indicating scroll (out of 36 pixels) - very lenient for reliable detection
-    SCROLL_WIDTH_THRESHOLD: 40,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 150,  // Max area for click/type actions (pixels²) - tight for precise detection
+    SCROLL_HEIGHT_THRESHOLD: 6,  // Height change indicating scroll (out of 36 pixels) - higher = stricter scroll detection
+    SCROLL_WIDTH_THRESHOLD: 45,  // Width change indicating scroll (out of 64 pixels) - higher = stricter
+    LOCALIZED_ACTION_AREA: 120,  // Max area for click/type actions (pixels²) - slightly larger for better click detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - ultra sensitive for immediate click detection
-    ZOOM_MAX_VELOCITY: 80,      // Max velocity for zoom-in (pixels/frame)
-    ZOOM_OUT_VELOCITY: 100,     // Velocity threshold for zoom-out
-    MOUSE_OVERRIDE_THRESHOLD: 2, // Minimum motion to override typing mode
+    ZOOM_MIN_MASS: 3,           // Minimum mass to trigger zoom - lower for better click detection
+    ZOOM_MAX_VELOCITY: 60,      // Max velocity for zoom-in (pixels/frame) - lower for stability
+    ZOOM_OUT_VELOCITY: 80,      // Velocity threshold for zoom-out
+    MOUSE_OVERRIDE_THRESHOLD: 4, // Minimum motion to override typing mode (increased)
     
     // Click tracking (Cursorful-style multi-click trigger)
+    // Auto zoom triggered when 2+ clicks within 3 second window
+    // Follow-cursor zoom maintained as long as clicks keep happening
+    // Two-click requirement prevents motion-sickness-inducing frequent zooms
     CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
-    MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom
+    MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom (2 clicks = intentional)
     
-    // Smoothing
-    TARGET_SMOOTHING: 0.4,      // Lerp factor for target position (0.4 = very responsive)
-    TARGET_SMOOTHING_CLICK: 1.0, // No smoothing on clicks (instant snap)
+    // Smoothing - Higher values = more responsive, lower = slower/cinematic
+    // When zoomed in, we need responsive cursor following
+    TARGET_SMOOTHING: 0.4,      // Lerp factor for cursor following when zoomed (0.4 = responsive)
+    TARGET_SMOOTHING_CLICK: 0.6, // Smoothing on clicks (0.6 = snappy positioning on clicked component)
     
     // Zoom levels
-    ZOOM_IN_LEVEL: 1.8,         // Zoom level for focused actions (clicks, typing)
+    ZOOM_IN_LEVEL: 1.6,         // Zoom level for focused actions (1.6x = less aggressive)
     ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
 } as const;
 
-// Encoder timing constants
-const ENCODER_SETTLE_DELAY_MS = 300; // Delay to allow pending frames to complete encoding
+// Encoder output callback processing delay (brief wait after flush for callbacks to complete)
+const ENCODER_OUTPUT_DELAY_MS = 50;
 
 export const useRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
@@ -174,14 +178,9 @@ export const useRecorder = () => {
             typingTargetRef.current = null;
             lastKeyTimeRef.current = 0;
 
-            // Give time for any pending frame encoding to complete
-            // This prevents race conditions where frames are still being encoded
-            // when we try to flush/close the encoder
-            console.log(`⏳ Waiting ${ENCODER_SETTLE_DELAY_MS}ms for in-flight frames to complete...`);
-            await new Promise(resolve => setTimeout(resolve, ENCODER_SETTLE_DELAY_MS));
-
-            // Flush and Close Encoder with improved error handling
-            // CRITICAL: Keep canvas and stream alive until encoder is fully closed
+            // CRITICAL: Flush encoder IMMEDIATELY before it can auto-close
+            // When the video track ends, some browsers will close the encoder
+            // So we must flush right away to capture all pending output
             if (videoEncoderRef.current) {
                 try {
                     const encoderState = videoEncoderRef.current.state;
@@ -192,7 +191,7 @@ export const useRecorder = () => {
                         console.log("Encoder flushed successfully");
                     }
                     
-                    // Check state again after flush
+                    // Close encoder after flush
                     if (videoEncoderRef.current.state !== 'closed') {
                         videoEncoderRef.current.close();
                         console.log("Encoder closed successfully");
@@ -210,6 +209,10 @@ export const useRecorder = () => {
                 }
                 videoEncoderRef.current = null;
             }
+
+            // Brief delay to ensure all encoder output callbacks have fired
+            // This is much shorter than before since we already flushed
+            await new Promise(resolve => setTimeout(resolve, ENCODER_OUTPUT_DELAY_MS));
 
             // Finalize muxer BEFORE stopping stream and UI updates
             // The muxer needs to finish writing before we clean up everything
@@ -280,7 +283,18 @@ export const useRecorder = () => {
             setStream(displayMedia);
             setPreviewBlobUrl(null);
             warmupFramesRef.current = 0; // Reset warmup counter
+            frameCountRef.current = 0; // Reset frame counter for new recording
+            startTimeRef.current = 0; // Reset start time for new recording timestamps
             lastMotionTimeRef.current = Date.now();
+            
+            // Reset click tracking state for new recording
+            clickTimestampsRef.current = [];
+            zoomEnabledRef.current = false;
+            
+            // Reset typing state for clean start
+            lastKeyTimeRef.current = 0;
+            isTypingModeRef.current = false;
+            typingTargetRef.current = null;
 
             const track = displayMedia.getVideoTracks()[0];
             const settings = track.getSettings();
@@ -302,17 +316,24 @@ export const useRecorder = () => {
             // Initialize VideoEncoder with robust configuration for animated content
             const encoder = new VideoEncoder({
                 output: (chunk, metadata) => {
-                    // Only process output if we're still actively recording
-                    if (!isProcessorActiveRef.current) return;
+                    // ALWAYS process encoder output, even during shutdown
+                    // The encoder's flush() will ensure all pending chunks are processed
+                    // before we finalize the muxer.
+                    
+                    // Log first output for debugging
+                    if (!muxerRef.current) {
+                        console.log(`📦 Encoder output received: chunk type=${chunk.type}, size=${chunk.byteLength}, hasDescription=${!!metadata?.decoderConfig?.description}`);
+                    }
                     
                     // Lazy init Muxer once we have the codec config (SPS/PPS)
                     if (!muxerRef.current && metadata?.decoderConfig?.description) {
                         const description = new Uint8Array(metadata.decoderConfig.description as ArrayBuffer);
-                        console.log("Initializing Muxer with AVCC config, length:", description.length);
+                        console.log("✅ Initializing Muxer with AVCC config, length:", description.length);
                         try {
                             muxerRef.current = new Mp4Muxer(width, height, description);
+                            console.log("✅ Muxer initialized successfully");
                         } catch (e) {
-                            console.error("Failed to create Muxer:", e);
+                            console.error("❌ Failed to create Muxer:", e);
                             return;
                         }
                     }
@@ -331,7 +352,7 @@ export const useRecorder = () => {
                 error: (e) => {
                     // Only log error if we're not already stopping (expected during shutdown)
                     if (isProcessorActiveRef.current) {
-                        console.error("VideoEncoder error:", e);
+                        console.error("❌ VideoEncoder error:", e);
                     } else {
                         console.log("VideoEncoder error during shutdown (expected):", e.message);
                     }
@@ -341,26 +362,35 @@ export const useRecorder = () => {
                 },
             });
 
-            // Configure encoder with settings optimized for performance and quality balance
-            // High Profile Level 4.0 (640028) supports 1080p resolution
-            // Hardware acceleration required to offload encoding to GPU for smooth recording
+            // Configure encoder with settings optimized for screen recording
+            // Use 'realtime' latency mode to ensure frames are output immediately
+            // This prevents the encoder from buffering too many frames which can cause
+            // issues when the video track ends abruptly
 
-            // Bitrate selection based on quality
-            let targetBitrate = 8_000_000; // Default Highest
-            if (quality === 'high') targetBitrate = 4_000_000;
-            if (quality === 'low') targetBitrate = 2_000_000;
+            // Bitrate selection based on quality setting
+            // Higher bitrates for screen content which has sharp edges and text
+            let targetBitrate = 12_000_000; // Default Highest: 12 Mbps (good for 1080p screen content)
+            if (quality === 'high') targetBitrate = 8_000_000; // High: 8 Mbps
+            if (quality === 'low') targetBitrate = 4_000_000;   // Low: 4 Mbps
 
-            console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps`);
+            console.log(`⚙️ Configuring Encoder: Quality=${quality}, Bitrate=${targetBitrate/1000000}Mbps, Resolution=${width}x${height}`);
 
+            // Use Baseline Profile Level 4.0 for 1080p support with maximum compatibility
+            // Level 4.0 supports up to 1920x1080 at 30fps (needed for full HD recording)
+            // Using 'prefer-software' and 'realtime' to ensure immediate, reliable output
+            // Some hardware encoders buffer frames aggressively which causes issues when
+            // the video track ends abruptly (muxer never gets initialized)
             encoder.configure({
-                codec: 'avc1.640028', // High Profile, Level 4.0 - supports 1080p with better compression
+                codec: 'avc1.420028', // Baseline Profile, Level 4.0 - supports 1080p30
                 width: width,
                 height: height,
                 bitrate: targetBitrate,
-                framerate: 30, // 30fps for smooth recording without laggy performance
-                hardwareAcceleration: 'prefer-hardware', // Prefer hardware encoding for better performance
-                latencyMode: 'realtime', // Realtime mode for responsive encoding
+                framerate: 30,
+                hardwareAcceleration: 'prefer-software', // More reliable output than hardware encoding
+                latencyMode: 'realtime', // CRITICAL: Output frames immediately, don't buffer
             });
+            
+            console.log(`✅ Encoder configured, state: ${encoder.state}`);
             videoEncoderRef.current = encoder;
 
             // Setup Render Loop
@@ -508,57 +538,53 @@ export const useRecorder = () => {
                         const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
-                        const isCompact = widthChange < 20 && heightChange < 10;
-                        const isVerticalMove = heightChange > widthChange * 1.5;
+                        // STRICTER click detection: smaller area, more compact shape
+                        const isCompact = widthChange < 15 && heightChange < 8; // Tighter bounds
+                        const isVerticalMove = heightChange > widthChange * 1.2; // Stricter: excludes more vertical motions from clicks
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
                         const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
                         const isScrolling = hasVerticalScroll && hasWideArea;
                         
+                        // Stricter click detection: requires VERY compact motion pattern
                         const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
-                                             totalMass > MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                             totalMass >= MOTION_CONFIG.ZOOM_MIN_MASS &&
+                                             totalMass < 50 && // Upper bound to reject large motions
                                              isCompact && !isVerticalMove && !isScrolling;
 
                         // Follow-cursor logic: When zoom is active, continuously track cursor position
-                        // Use instant positioning on clicks, smooth tracking for cursor movement
+                        // Responsive tracking when zoomed in, smoother when zoomed out
                         if (zoomEnabledRef.current && rigRef.current.get_view_rect) {
                             const view = rigRef.current.get_view_rect();
                             const currentZoom = view.zoom || 1.0;
                             
-                            // Instant snap to position on click actions for immediate response
+                            // Click action: Snap quickly to clicked component
                             if (isClickAction) {
-                                // No lerp - instant positioning on clicks
-                                currentTargetRef.current.x = detectedX;
-                                currentTargetRef.current.y = detectedY;
+                                const clickSmoothing = MOTION_CONFIG.TARGET_SMOOTHING_CLICK;
+                                currentTargetRef.current.x = currentTargetRef.current.x + 
+                                    (detectedX - currentTargetRef.current.x) * clickSmoothing;
+                                currentTargetRef.current.y = currentTargetRef.current.y + 
+                                    (detectedY - currentTargetRef.current.y) * clickSmoothing;
                             } else if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
-                                // Apply high smoothing for responsive cursor following when zoomed
+                                // Zoomed in: Follow cursor responsively
                                 const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
                                     (detectedX - currentTargetRef.current.x) * smoothing;
                                 currentTargetRef.current.y = currentTargetRef.current.y + 
                                     (detectedY - currentTargetRef.current.y) * smoothing;
-                            } else {
-                                // When zoomed out, use moderate smoothing
-                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.6;
-                                currentTargetRef.current.x = currentTargetRef.current.x + 
-                                    (detectedX - currentTargetRef.current.x) * smoothing;
-                                currentTargetRef.current.y = currentTargetRef.current.y + 
-                                    (detectedY - currentTargetRef.current.y) * smoothing;
                             }
+                            // When zoomed out, don't update target (camera stays centered)
                         } else {
-                            // When zoom is not active yet
+                            // When zoom is not active yet - prepare for potential zoom
                             if (isClickAction) {
-                                // Instant snap on clicks even before zoom is fully active
-                                // This pre-positions the camera for when zoom activates
-                                currentTargetRef.current.x = detectedX;
-                                currentTargetRef.current.y = detectedY;
-                            } else {
-                                // Use lighter smoothing for non-click movement
-                                const smoothing = MOTION_CONFIG.TARGET_SMOOTHING * 0.3;
+                                // Pre-position on clicks before zoom activates
+                                // Slightly slower than active zoom (80%) for smoother transition when zoom kicks in
+                                const clickSmoothing = MOTION_CONFIG.TARGET_SMOOTHING_CLICK * 0.8;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
-                                    (detectedX - currentTargetRef.current.x) * smoothing;
+                                    (detectedX - currentTargetRef.current.x) * clickSmoothing;
                                 currentTargetRef.current.y = currentTargetRef.current.y + 
-                                    (detectedY - currentTargetRef.current.y) * smoothing;
+                                    (detectedY - currentTargetRef.current.y) * clickSmoothing;
                             }
+                            // Don't track cursor movement when zoom is not active
                         }
 
                         // Update history
@@ -573,27 +599,41 @@ export const useRecorder = () => {
                             typingTargetRef.current = null;
                         }
 
-                        // Click tracking: Add timestamp when a localized action is detected
-                        // (isClickAction is the same as isLocalizedAction)
+                        // Click tracking: Window-based zoom trigger
+                        // - First click opens a 3-second window
+                        // - Second click within window enables zoom
+                        // - Window closes after 3 seconds, next click starts fresh window
                         if (isClickAction) {
                             const now = Date.now();
-                            clickTimestampsRef.current.push(now);
                             
-                            // Remove old clicks outside the time window
-                            clickTimestampsRef.current = clickTimestampsRef.current.filter(
-                                timestamp => now - timestamp < MOTION_CONFIG.CLICK_WINDOW_MS
-                            );
-                            
-                            // Enable zoom if we have 2+ clicks within the window
-                            if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
-                                zoomEnabledRef.current = true;
+                            if (clickTimestampsRef.current.length === 0) {
+                                // No active window - this click opens a new window
+                                clickTimestampsRef.current = [now];
+                            } else {
+                                const firstClickTime = clickTimestampsRef.current[0];
+                                if (now - firstClickTime < MOTION_CONFIG.CLICK_WINDOW_MS) {
+                                    // Still within active window - add this click
+                                    clickTimestampsRef.current.push(now);
+                                    
+                                    // Enable zoom once we reach MIN_CLICKS_TO_ZOOM within window
+                                    if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
+                                        zoomEnabledRef.current = true;
+                                    }
+                                } else {
+                                    // Window expired - start completely fresh window
+                                    // This click is the first click of a new window
+                                    clickTimestampsRef.current = [now];
+                                    // Reset zoom - user needs to click twice again to enable
+                                    zoomEnabledRef.current = false;
+                                }
                             }
                         }
 
                         // Smart Autozoom with clear priority:
                         // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
-                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions) - ONLY if zoom enabled
-                        // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
+                        // PRIORITY 2: Click actions zoom IN - requires 2+ clicks within 3s window
+                        // PRIORITY 3: Typing also zooms IN (handled separately in typing mode)
+                        // PRIORITY 4: Light motion maintains current zoom (for cursor movement)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
                         // Do NOT allow zoom during warmup period regardless of clicks
@@ -610,8 +650,8 @@ export const useRecorder = () => {
                                 zoomEnabledRef.current = false;
                                 clickTimestampsRef.current = [];
                             } else if (isClickAction && zoomEnabledRef.current) {
-                                // Focused action detected (click, type) - zoom in
-                                // Only triggers if NOT scrolling AND zoom is enabled
+                                // Click action detected - zoom in
+                                // Only triggers if NOT scrolling AND zoom is enabled by 2+ clicks
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                             }
                         }
@@ -629,12 +669,10 @@ export const useRecorder = () => {
 
                 // Check if we're in typing mode (typing within last 2 seconds)
                 if (timeSinceTyping < 2000 && isTypingModeRef.current && typingTargetRef.current) {
-                    // PRIORITY: Typing mode - zoom in and follow the caret
-                    // Override motion detection to focus on text input
+                    // Typing mode - zoom in and follow the caret
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                     
                     // Update target to caret position with smooth lerp
-                    // Use same smoothing factor as motion detection for consistency
                     const lerpFactor = MOTION_CONFIG.TARGET_SMOOTHING;
                     currentTargetRef.current.x = currentTargetRef.current.x + 
                         (typingTargetRef.current.x - currentTargetRef.current.x) * lerpFactor;
@@ -646,8 +684,8 @@ export const useRecorder = () => {
                     typingTargetRef.current = null;
                 }
 
-                if (timeSinceMotion > 2000 && !isTypingModeRef.current) { // 2s idle and not typing
-                    // Zoom OUT only if not in typing mode
+                // Zoom out after 2 seconds of no motion/clicks AND not typing
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current) {
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 

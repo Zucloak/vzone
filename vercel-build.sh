@@ -19,7 +19,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 echo "Rust version: $(rustc --version)"
 echo "Cargo version: $(cargo --version)"
 
-# 2. Build Wasm
+# 2. Add wasm32 target (required for wasm-pack)
+echo "Adding wasm32-unknown-unknown target..."
+rustup target add wasm32-unknown-unknown
+
+# 3. Build Wasm
 echo "Building Wasm..."
 # Ensure wasm-pack is installed
 npm install -D wasm-pack
@@ -28,7 +32,7 @@ cd recorder_core
 npx wasm-pack build --target web
 cd ..
 
-# 3. Build Frontend
+# 4. Build Frontend
 echo "Building Frontend..."
 tsc -b
 vite build
