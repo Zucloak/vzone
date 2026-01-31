@@ -20,9 +20,12 @@ const MOTION_CONFIG = {
     ZOOM_OUT_VELOCITY: 80,      // Velocity threshold for zoom-out
     MOUSE_OVERRIDE_THRESHOLD: 4, // Minimum motion to override typing mode (increased)
     
-    // Click tracking (Cursorful-style multi-click trigger - STRICTER for fewer false positives)
-    CLICK_WINDOW_MS: 2000,      // Time window for click tracking (2 seconds - tighter window)
-    MIN_CLICKS_TO_ZOOM: 3,      // Minimum clicks required to trigger zoom (3 clicks for intentional trigger)
+    // Click tracking (Cursorful-style multi-click trigger)
+    // Auto zoom triggered when 2+ clicks within 3 second window
+    // Follow-cursor zoom maintained as long as clicks keep happening
+    // Two-click requirement prevents motion-sickness-inducing frequent zooms
+    CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
+    MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom (2 clicks = intentional)
     
     // Smoothing
     TARGET_SMOOTHING: 0.3,      // Lerp factor for target position (0.3 = responsive but stable)
@@ -625,8 +628,9 @@ export const useRecorder = () => {
 
                         // Smart Autozoom with clear priority:
                         // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
-                        // PRIORITY 2: Localized clicks/typing zoom IN (for focused actions) - ONLY if zoom enabled
-                        // PRIORITY 3: Light motion maintains current zoom (for cursor movement)
+                        // PRIORITY 2: Click actions zoom IN - requires 2+ clicks within 3s window
+                        // PRIORITY 3: Typing also zooms IN (handled separately in typing mode)
+                        // PRIORITY 4: Light motion maintains current zoom (for cursor movement)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
                         // Do NOT allow zoom during warmup period regardless of clicks
@@ -643,8 +647,8 @@ export const useRecorder = () => {
                                 zoomEnabledRef.current = false;
                                 clickTimestampsRef.current = [];
                             } else if (isClickAction && zoomEnabledRef.current) {
-                                // Focused action detected (click, type) - zoom in
-                                // Only triggers if NOT scrolling AND zoom is enabled
+                                // Click action detected - zoom in
+                                // Only triggers if NOT scrolling AND zoom is enabled by 2+ clicks
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                             }
                         }
@@ -662,12 +666,10 @@ export const useRecorder = () => {
 
                 // Check if we're in typing mode (typing within last 2 seconds)
                 if (timeSinceTyping < 2000 && isTypingModeRef.current && typingTargetRef.current) {
-                    // PRIORITY: Typing mode - zoom in and follow the caret
-                    // Override motion detection to focus on text input
+                    // Typing mode - zoom in and follow the caret
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                     
                     // Update target to caret position with smooth lerp
-                    // Use same smoothing factor as motion detection for consistency
                     const lerpFactor = MOTION_CONFIG.TARGET_SMOOTHING;
                     currentTargetRef.current.x = currentTargetRef.current.x + 
                         (typingTargetRef.current.x - currentTargetRef.current.x) * lerpFactor;
@@ -679,8 +681,8 @@ export const useRecorder = () => {
                     typingTargetRef.current = null;
                 }
 
-                if (timeSinceMotion > 2000 && !isTypingModeRef.current) { // 2s idle and not typing
-                    // Zoom OUT only if not in typing mode
+                // Zoom out after 2 seconds of no motion/clicks AND not typing
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current) {
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
