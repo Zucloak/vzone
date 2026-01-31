@@ -609,20 +609,20 @@ export const useRecorder = () => {
                             typingTargetRef.current = null;
                         }
 
-                        // Click tracking: Add timestamp when a localized action is detected
-                        // Timer starts from FIRST click - 2nd click within 3s enables zoom
+                        // Click tracking: Window-based zoom trigger
+                        // - First click opens a 3-second window
+                        // - Second click within window enables zoom
+                        // - Window closes after 3 seconds, next click starts fresh window
                         if (isClickAction) {
                             const now = Date.now();
                             
-                            // If no clicks yet or window expired from first click, start fresh
                             if (clickTimestampsRef.current.length === 0) {
-                                // First click - start the window
+                                // No active window - this click opens a new window
                                 clickTimestampsRef.current = [now];
                             } else {
-                                // Check if we're still within window from FIRST click
                                 const firstClickTime = clickTimestampsRef.current[0];
                                 if (now - firstClickTime < MOTION_CONFIG.CLICK_WINDOW_MS) {
-                                    // Still within window - add this click
+                                    // Still within active window - add this click
                                     clickTimestampsRef.current.push(now);
                                     
                                     // Enable zoom once we reach MIN_CLICKS_TO_ZOOM within window
@@ -630,9 +630,11 @@ export const useRecorder = () => {
                                         zoomEnabledRef.current = true;
                                     }
                                 } else {
-                                    // Window expired from first click - start new window with this click
+                                    // Window expired - start completely fresh window
+                                    // This click is the first click of a new window
                                     clickTimestampsRef.current = [now];
-                                    // Don't disable zoom if already enabled - user is actively clicking
+                                    // Reset zoom - user needs to click twice again to enable
+                                    zoomEnabledRef.current = false;
                                 }
                             }
                         }
