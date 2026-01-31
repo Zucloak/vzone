@@ -610,19 +610,30 @@ export const useRecorder = () => {
                         }
 
                         // Click tracking: Add timestamp when a localized action is detected
-                        // (isClickAction is the same as isLocalizedAction)
+                        // Timer starts from FIRST click - 2nd click within 3s enables zoom
                         if (isClickAction) {
                             const now = Date.now();
-                            clickTimestampsRef.current.push(now);
                             
-                            // Remove old clicks outside the time window
-                            clickTimestampsRef.current = clickTimestampsRef.current.filter(
-                                timestamp => now - timestamp < MOTION_CONFIG.CLICK_WINDOW_MS
-                            );
-                            
-                            // Enable zoom if we have 3+ clicks within the window
-                            if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
-                                zoomEnabledRef.current = true;
+                            // If no clicks yet or window expired from first click, start fresh
+                            if (clickTimestampsRef.current.length === 0) {
+                                // First click - start the window
+                                clickTimestampsRef.current = [now];
+                            } else {
+                                // Check if we're still within window from FIRST click
+                                const firstClickTime = clickTimestampsRef.current[0];
+                                if (now - firstClickTime < MOTION_CONFIG.CLICK_WINDOW_MS) {
+                                    // Still within window - add this click
+                                    clickTimestampsRef.current.push(now);
+                                    
+                                    // Enable zoom once we reach MIN_CLICKS_TO_ZOOM within window
+                                    if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
+                                        zoomEnabledRef.current = true;
+                                    }
+                                } else {
+                                    // Window expired from first click - start new window with this click
+                                    clickTimestampsRef.current = [now];
+                                    // Don't disable zoom if already enabled - user is actively clicking
+                                }
                             }
                         }
 
