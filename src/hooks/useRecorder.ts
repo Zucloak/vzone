@@ -27,9 +27,9 @@ const MOTION_CONFIG = {
     CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
     MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom (2 clicks = intentional)
     
-    // Smoothing
-    TARGET_SMOOTHING: 0.3,      // Lerp factor for target position (0.3 = responsive but stable)
-    TARGET_SMOOTHING_CLICK: 0.8, // Slight smoothing on clicks (prevents jarring snaps)
+    // Smoothing - Lower values = more smoothing (slower, cinematic movement)
+    TARGET_SMOOTHING: 0.15,     // Lerp factor for target position (0.15 = smoother, more cinematic)
+    TARGET_SMOOTHING_CLICK: 0.25, // Smoothing on clicks (0.25 = smooth transition between click targets)
     
     // Zoom levels
     ZOOM_IN_LEVEL: 1.6,         // Zoom level for focused actions (1.6x = less aggressive)
