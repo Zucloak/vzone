@@ -15,17 +15,20 @@ export const ZoomEditor: React.FC<ZoomEditorProps> = ({
     initialZoomEffects = [],
     onZoomEffectsChange
 }) => {
-    const [zoomEffects, setZoomEffects] = useState<ZoomEffect[]>(initialZoomEffects);
+    // Track if we've initialized from props to avoid re-setting after user edits
+    const hasInitializedRef = useRef(false);
+    const [zoomEffects, setZoomEffects] = useState<ZoomEffect[]>([]);
     const [selectedEffect, setSelectedEffect] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragType, setDragType] = useState<'move' | 'resize-start' | 'resize-end' | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
     const [currentTime, setCurrentTime] = useState(0);
     
-    // Initialize with recorded zoom effects when they become available
+    // Initialize with recorded zoom effects ONCE when they become available
     useEffect(() => {
-        if (initialZoomEffects.length > 0 && zoomEffects.length === 0) {
+        if (initialZoomEffects.length > 0 && !hasInitializedRef.current) {
             setZoomEffects(initialZoomEffects);
+            hasInitializedRef.current = true;
         }
     }, [initialZoomEffects]);
 
