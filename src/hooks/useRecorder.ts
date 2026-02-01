@@ -6,16 +6,16 @@ import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/care
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 15,              // RGB diff threshold (higher = less sensitive to noise)
-    MIN_MASS: 4,                // Minimum changed pixels to register motion (increased for noise reduction)
+    THRESHOLD: 12,              // RGB diff threshold (lower = more sensitive to clicks)
+    MIN_MASS: 2,                // Minimum changed pixels to register motion (lower for better click detection)
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 6,  // Height change indicating scroll (out of 36 pixels) - higher = stricter scroll detection
-    SCROLL_WIDTH_THRESHOLD: 45,  // Width change indicating scroll (out of 64 pixels) - higher = stricter
-    LOCALIZED_ACTION_AREA: 120,  // Max area for click/type actions (pixels²) - slightly larger for better click detection
+    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels) - higher = stricter scroll detection
+    SCROLL_WIDTH_THRESHOLD: 50,  // Width change indicating scroll (out of 64 pixels) - higher = stricter
+    LOCALIZED_ACTION_AREA: 200,  // Max area for click/type actions (pixels²) - larger for better click detection
     
     // Zoom triggers
-    ZOOM_MIN_MASS: 3,           // Minimum mass to trigger zoom - lower for better click detection
+    ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - very low for better click detection
     ZOOM_MAX_VELOCITY: 60,      // Max velocity for zoom-in (pixels/frame) - lower for stability
     ZOOM_OUT_VELOCITY: 80,      // Velocity threshold for zoom-out
     MOUSE_OVERRIDE_THRESHOLD: 4, // Minimum motion to override typing mode (increased)
@@ -538,18 +538,17 @@ export const useRecorder = () => {
                         const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
-                        // STRICTER click detection: smaller area, more compact shape
-                        const isCompact = widthChange < 15 && heightChange < 8; // Tighter bounds
-                        const isVerticalMove = heightChange > widthChange * 1.2; // Stricter: excludes more vertical motions from clicks
+                        // Relaxed click detection for better trigger sensitivity
+                        const isCompact = widthChange < 25 && heightChange < 15; // More generous bounds
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
                         const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
                         const isScrolling = hasVerticalScroll && hasWideArea;
                         
-                        // Stricter click detection: requires VERY compact motion pattern
+                        // Click detection: compact motion pattern that isn't scrolling
                         const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                              totalMass >= MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                             totalMass < 50 && // Upper bound to reject large motions
-                                             isCompact && !isVerticalMove && !isScrolling;
+                                             totalMass < 80 && // Higher upper bound to catch more clicks
+                                             isCompact && !isScrolling;
 
                         // Follow-cursor logic: When zoom is active, continuously track cursor position
                         // Responsive tracking when zoomed in, smoother when zoomed out
