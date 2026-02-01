@@ -643,64 +643,25 @@ export const useRecorder = () => {
                             typingTargetRef.current = null;
                         }
 
-                        // Click tracking: Window-based zoom trigger
-                        // - First click opens a 3-second window
-                        // - Second click within window enables zoom
-                        // - Window closes after 3 seconds, next click starts fresh window
-                        if (isClickAction) {
-                            const now = Date.now();
-                            
-                            if (clickTimestampsRef.current.length === 0) {
-                                // No active window - this click opens a new window
-                                clickTimestampsRef.current = [now];
-                            } else {
-                                const firstClickTime = clickTimestampsRef.current[0];
-                                if (now - firstClickTime < MOTION_CONFIG.CLICK_WINDOW_MS) {
-                                    // Still within active window - add this click
-                                    clickTimestampsRef.current.push(now);
-                                    
-                                    // Enable zoom once we reach MIN_CLICKS_TO_ZOOM within window
-                                    if (clickTimestampsRef.current.length >= MOTION_CONFIG.MIN_CLICKS_TO_ZOOM) {
-                                        zoomEnabledRef.current = true;
-                                    }
-                                } else {
-                                    // Window expired - start completely fresh window
-                                    // This click is the first click of a new window
-                                    clickTimestampsRef.current = [now];
-                                    // Reset zoom - user needs to click twice again to enable
-                                    zoomEnabledRef.current = false;
-                                }
-                            }
-                        }
+                        // NOTE: Motion-based click detection removed - unreliable
+                        // Zoom is now triggered only by keyboard input (typing mode)
 
-                        // Smart Autozoom with clear priority:
-                        // PRIORITY 1: Scrolling ALWAYS zooms OUT (most important for navigation)
-                        // PRIORITY 2: Click actions zoom IN - requires 2+ clicks within 3s window
-                        // PRIORITY 3: Typing also zooms IN (handled separately in typing mode)
-                        // PRIORITY 4: Light motion maintains current zoom (for cursor movement)
+                        // Smart Autozoom:
+                        // - Scrolling ALWAYS zooms OUT
+                        // - Typing zooms IN (keyboard-triggered, reliable)
+                        // NOTE: Motion-based click detection DISABLED - unreliable
+                        // (pixel changes can't distinguish real clicks from hover effects)
 
                         // WARMUP: Force zoom out for first 1.5s to prevent startup jumps
-                        // Do NOT allow zoom during warmup period regardless of clicks
                         if (warmupFramesRef.current < 90) {
                              rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                             // Don't enable zoom during warmup
-                             zoomEnabledRef.current = false;
                         } else {
                             if (isScrolling) {
-                                // Scrolling detected - ALWAYS zoom OUT to overview for context
-                                // This takes absolute priority over everything else
+                                // Scrolling detected - zoom OUT for context
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
-                                // Reset zoom enablement on scroll
-                                zoomEnabledRef.current = false;
-                                clickTimestampsRef.current = [];
-                            } else if (zoomEnabledRef.current) {
-                                // KEEP zoomed in as long as zoom is enabled
-                                // This prevents the shaky zoom out/in when clicking between components
-                                // Zoom will only go out when window expires or scroll is detected
-                                rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                             }
+                            // Zoom stays at current level - only typing triggers zoom in
                         }
-                        // For light motion (panning, slight hover), maintain current zoom level
                     }
                 } else if (motionContextRef.current) {
                     // First frame init
@@ -731,20 +692,8 @@ export const useRecorder = () => {
 
                 // Check if we're still within an active click window
                 const now = Date.now();
-                const firstClickTime = clickTimestampsRef.current.length > 0 ? clickTimestampsRef.current[0] : 0;
-                const hasActiveClickWindow = clickTimestampsRef.current.length > 0 && 
-                    (now - firstClickTime < MOTION_CONFIG.CLICK_WINDOW_MS);
-                
-                // If window expired, reset zoom state
-                // This ensures zoom out happens when user stops clicking for 3 seconds
-                if (!hasActiveClickWindow && clickTimestampsRef.current.length > 0) {
-                    clickTimestampsRef.current = [];
-                    zoomEnabledRef.current = false;
-                }
-
-                // Zoom out after 2 seconds of no motion/clicks AND not typing AND no active click window
-                // This prevents zoom out when user is actively clicking within the zoom window
-                if (timeSinceMotion > 2000 && !isTypingModeRef.current && !hasActiveClickWindow && !zoomEnabledRef.current) {
+                // Zoom out after 2 seconds of no motion AND not typing
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current) {
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
