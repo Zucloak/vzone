@@ -87,6 +87,23 @@ export const useRecorder = () => {
     // Click Tracking State (Cursorful-style multi-click trigger)
     const clickTimestampsRef = useRef<number[]>([]); // Track timestamps of recent clicks
     const zoomEnabledRef = useRef(false); // Whether zoom is enabled (2+ clicks detected)
+    
+    // Zoom Events Tracking - Record zoom events during recording for editor
+    const [recordedZoomEffects, setRecordedZoomEffects] = useState<Array<{
+        id: string;
+        timestamp: number;
+        duration: number;
+        zoomLevel: number;
+        cursorPosition: { x: number; y: number };
+    }>>([]);
+    const currentZoomEventRef = useRef<{ startTime: number; x: number; y: number } | null>(null);
+    const zoomEventsRef = useRef<Array<{
+        id: string;
+        timestamp: number;
+        duration: number;
+        zoomLevel: number;
+        cursorPosition: { x: number; y: number };
+    }>>([]);
 
     useEffect(() => {
         // Init Wasm
@@ -153,6 +170,27 @@ export const useRecorder = () => {
         isProcessorActiveRef.current = false;
         
         console.log("🛑 stopRecording called - stopping worker and frame generation");
+        
+        // Save recorded zoom events before cleanup
+        // If there's an ongoing zoom, end it now
+        if (currentZoomEventRef.current && startTimeRef.current > 0) {
+            const elapsedMs = performance.now() - startTimeRef.current;
+            const zoomEvent = {
+                id: Math.random().toString(36).substr(2, 9),
+                timestamp: currentZoomEventRef.current.startTime,
+                duration: Math.max(500, elapsedMs - currentZoomEventRef.current.startTime),
+                zoomLevel: MOTION_CONFIG.ZOOM_IN_LEVEL,
+                cursorPosition: {
+                    x: currentZoomEventRef.current.x,
+                    y: currentZoomEventRef.current.y
+                }
+            };
+            zoomEventsRef.current.push(zoomEvent);
+            currentZoomEventRef.current = null;
+        }
+        // Store the recorded zoom effects for the editor
+        setRecordedZoomEffects([...zoomEventsRef.current]);
+        console.log(`📍 Recorded ${zoomEventsRef.current.length} zoom events`);
 
         try {
             // Stop Worker Loop first to prevent new frames
@@ -295,6 +333,11 @@ export const useRecorder = () => {
             lastKeyTimeRef.current = 0;
             isTypingModeRef.current = false;
             typingTargetRef.current = null;
+            
+            // Reset zoom events tracking for new recording
+            zoomEventsRef.current = [];
+            currentZoomEventRef.current = null;
+            setRecordedZoomEffects([]);
 
             const track = displayMedia.getVideoTracks()[0];
             const settings = track.getSettings();
@@ -705,6 +748,36 @@ export const useRecorder = () => {
                 }
                 const view = rigRef.current.get_view_rect();
                 
+                // Track zoom events for the editor
+                // Detect when we transition into/out of zoomed state
+                const isZoomedIn = view.zoom > 1.1; // Consider zoomed if > 1.1
+                const wasZoomedIn = currentZoomEventRef.current !== null;
+                
+                if (isZoomedIn && !wasZoomedIn) {
+                    // Started zooming - record start time and position
+                    const elapsedMs = startTimeRef.current > 0 ? performance.now() - startTimeRef.current : 0;
+                    currentZoomEventRef.current = {
+                        startTime: elapsedMs,
+                        x: currentTargetRef.current.x / width, // Normalize to 0-1
+                        y: currentTargetRef.current.y / height
+                    };
+                } else if (!isZoomedIn && wasZoomedIn && currentZoomEventRef.current) {
+                    // Stopped zooming - record the complete zoom event
+                    const elapsedMs = startTimeRef.current > 0 ? performance.now() - startTimeRef.current : 0;
+                    const zoomEvent = {
+                        id: Math.random().toString(36).substr(2, 9),
+                        timestamp: currentZoomEventRef.current.startTime,
+                        duration: Math.max(500, elapsedMs - currentZoomEventRef.current.startTime), // Min 500ms
+                        zoomLevel: MOTION_CONFIG.ZOOM_IN_LEVEL,
+                        cursorPosition: {
+                            x: currentZoomEventRef.current.x,
+                            y: currentZoomEventRef.current.y
+                        }
+                    };
+                    zoomEventsRef.current.push(zoomEvent);
+                    currentZoomEventRef.current = null;
+                }
+                
                 physicsFrameCount++;
 
                 if (frameCountRef.current % 120 === 0) {
@@ -858,6 +931,7 @@ export const useRecorder = () => {
         backgroundConfig,
         quality,
         setQuality,
-        deviceCapability
+        deviceCapability,
+        recordedZoomEffects
     };
 };

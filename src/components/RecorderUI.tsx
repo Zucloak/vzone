@@ -17,7 +17,8 @@ export const RecorderUI: React.FC = () => {
         backgroundConfig,
         quality,
         setQuality,
-        deviceCapability
+        deviceCapability,
+        recordedZoomEffects
     } = useRecorder();
 
     // Local state for UI feedback (timers, etc.) that mirrors the hook
@@ -265,6 +266,7 @@ export const RecorderUI: React.FC = () => {
                             <ZoomEditor 
                                 videoRef={previewVideoRef}
                                 videoDuration={videoDuration}
+                                initialZoomEffects={recordedZoomEffects}
                             />
                         )}
                     </div>

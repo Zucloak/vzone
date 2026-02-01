@@ -5,20 +5,29 @@ import type { ZoomEffect } from '../types';
 interface ZoomEditorProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;
     videoDuration: number; // in seconds
+    initialZoomEffects?: ZoomEffect[]; // Zoom effects recorded during recording
     onZoomEffectsChange?: (effects: ZoomEffect[]) => void;
 }
 
 export const ZoomEditor: React.FC<ZoomEditorProps> = ({
     videoRef,
     videoDuration,
+    initialZoomEffects = [],
     onZoomEffectsChange
 }) => {
-    const [zoomEffects, setZoomEffects] = useState<ZoomEffect[]>([]);
+    const [zoomEffects, setZoomEffects] = useState<ZoomEffect[]>(initialZoomEffects);
     const [selectedEffect, setSelectedEffect] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragType, setDragType] = useState<'move' | 'resize-start' | 'resize-end' | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
     const [currentTime, setCurrentTime] = useState(0);
+    
+    // Initialize with recorded zoom effects when they become available
+    useEffect(() => {
+        if (initialZoomEffects.length > 0 && zoomEffects.length === 0) {
+            setZoomEffects(initialZoomEffects);
+        }
+    }, [initialZoomEffects]);
 
     // Sync with video time
     useEffect(() => {
