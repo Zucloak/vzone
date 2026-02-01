@@ -264,6 +264,7 @@ export const RecorderUI: React.FC = () => {
                         {/* Zoom Editor - Below video */}
                         {videoDuration > 0 && (
                             <ZoomEditor 
+                                key="zoom-editor"
                                 videoRef={previewVideoRef}
                                 videoDuration={videoDuration}
                                 initialZoomEffects={recordedZoomEffects}

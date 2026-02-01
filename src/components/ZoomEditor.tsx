@@ -25,12 +25,14 @@ export const ZoomEditor: React.FC<ZoomEditorProps> = ({
     const [currentTime, setCurrentTime] = useState(0);
     
     // Initialize with recorded zoom effects ONCE when they become available
+    // Use a ref to track the initial effects to avoid re-initialization
     useEffect(() => {
         if (initialZoomEffects.length > 0 && !hasInitializedRef.current) {
-            setZoomEffects(initialZoomEffects);
+            console.log('ZoomEditor: Initializing with', initialZoomEffects.length, 'effects');
+            setZoomEffects([...initialZoomEffects]); // Clone the array
             hasInitializedRef.current = true;
         }
-    }, [initialZoomEffects]);
+    }, [initialZoomEffects.length]); // Only depend on length, not the array itself
 
     // Sync with video time
     useEffect(() => {
