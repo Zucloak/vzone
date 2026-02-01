@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRecorder } from '../hooks/useRecorder';
 import { MonitorPlay, RotateCcw, Download, Zap } from 'lucide-react';
 import { DraggableControls } from './DraggableControls';
 import { BackgroundPicker } from './BackgroundPicker';
+import { ZoomEditor } from './ZoomEditor';
 
 export const RecorderUI: React.FC = () => {
     const {
@@ -16,13 +17,16 @@ export const RecorderUI: React.FC = () => {
         backgroundConfig,
         quality,
         setQuality,
-        deviceCapability
+        deviceCapability,
+        recordedZoomEffects
     } = useRecorder();
 
     // Local state for UI feedback (timers, etc.) that mirrors the hook
     const [timer, setTimer] = useState(0);
     const timerInterval = React.useRef<number | null>(null);
     const popupRef = React.useRef<Window | null>(null);
+    const previewVideoRef = useRef<HTMLVideoElement>(null);
+    const [videoDuration, setVideoDuration] = useState(0);
 
     useEffect(() => {
         if (isRecording) {
@@ -201,53 +205,71 @@ export const RecorderUI: React.FC = () => {
 
                 {/* 3. FINISHED / PREVIEW STATE */}
                 {previewBlobUrl && (
-                    <div className="w-full flex flex-col lg:flex-row gap-8 items-start animate-in fade-in slide-in-from-bottom-8 duration-700">
-                        {/* Video Container */}
-                        <div
-                            className="flex-1 aspect-video rounded-2xl shadow-2xl overflow-hidden relative flex items-center justify-center transition-all duration-500"
-                            style={getBackgroundStyle()}
-                        >
-                            {/* Inner Video Frame */}
-                            <div className="relative w-[85%] h-[85%] rounded-lg overflow-hidden shadow-lg bg-black">
-                                <video
-                                    src={previewBlobUrl}
-                                    controls
-                                    className="w-full h-full object-contain"
-                                />
+                    <div className="w-full flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                        {/* Top row: Video + Sidebar */}
+                        <div className="flex flex-col lg:flex-row gap-8 items-start">
+                            {/* Video Container */}
+                            <div
+                                className="flex-1 aspect-video rounded-2xl shadow-2xl overflow-hidden relative flex items-center justify-center transition-all duration-500"
+                                style={getBackgroundStyle()}
+                            >
+                                {/* Inner Video Frame */}
+                                <div className="relative w-[85%] h-[85%] rounded-lg overflow-hidden shadow-lg bg-black">
+                                    <video
+                                        ref={previewVideoRef}
+                                        src={previewBlobUrl}
+                                        controls
+                                        className="w-full h-full object-contain"
+                                        onLoadedMetadata={(e) => {
+                                            const video = e.target as HTMLVideoElement;
+                                            setVideoDuration(video.duration);
+                                        }}
+                                    />
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Sidebar */}
-                        <div className="w-full lg:w-80 space-y-8 p-1">
-                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100">
-                                <h3 className="text-sm font-bold text-neutral-900 mb-4 flex items-center gap-2">
-                                    <Zap size={16} className="text-yellow-500" />
-                                    Ready to Export
-                                </h3>
-                                <div className="text-sm text-neutral-600 mb-4">
-                                    Your recording is processed and ready.
+                            {/* Sidebar */}
+                            <div className="w-full lg:w-80 space-y-4 p-1">
+                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100">
+                                    <h3 className="text-sm font-bold text-neutral-900 mb-4 flex items-center gap-2">
+                                        <Zap size={16} className="text-yellow-500" />
+                                        Ready to Export
+                                    </h3>
+                                    <div className="text-sm text-neutral-600 mb-4">
+                                        Your recording is processed and ready.
+                                    </div>
+
+                                    <div className="border-t border-neutral-100 my-6"></div>
+                                    <h3 className="text-sm font-bold text-neutral-900 mb-4">Choose Background</h3>
+                                    <BackgroundPicker config={backgroundConfig} onChange={setBackground} />
                                 </div>
 
-                                <div className="border-t border-neutral-100 my-6"></div>
-                                <h3 className="text-sm font-bold text-neutral-900 mb-4">Choose Background</h3>
-                                <BackgroundPicker config={backgroundConfig} onChange={setBackground} />
+                                <button
+                                    onClick={() => {
+                                        const a = document.createElement('a');
+                                        a.href = previewBlobUrl;
+                                        a.download = `vzone-recording-${Date.now()}.mp4`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                    }}
+                                    className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg hover:shadow-blue-500/20 transition-all flex justify-center items-center gap-2"
+                                >
+                                    <Download size={18} />
+                                    Download MP4
+                                </button>
                             </div>
-
-                            <button
-                                onClick={() => {
-                                    const a = document.createElement('a');
-                                    a.href = previewBlobUrl;
-                                    a.download = `vzone-recording-${Date.now()}.mp4`;
-                                    document.body.appendChild(a);
-                                    a.click();
-                                    document.body.removeChild(a);
-                                }}
-                                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg hover:shadow-blue-500/20 transition-all flex justify-center items-center gap-2"
-                            >
-                                <Download size={18} />
-                                Download MP4
-                            </button>
                         </div>
+
+                        {/* Zoom Editor - Below video */}
+                        {videoDuration > 0 && (
+                            <ZoomEditor 
+                                key="zoom-editor"
+                                videoRef={previewVideoRef}
+                                videoDuration={videoDuration}
+                                initialZoomEffects={recordedZoomEffects}
+                            />
+                        )}
                     </div>
                 )}
             </main>
