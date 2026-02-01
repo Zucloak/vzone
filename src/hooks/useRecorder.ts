@@ -82,9 +82,8 @@ export const useRecorder = () => {
     const isTypingModeRef = useRef(false); // Whether we're currently in typing mode
     const keydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null); // Store handler for cleanup
     
-    // Click Tracking State (Cursorful-style multi-click trigger)
-    const clickTimestampsRef = useRef<number[]>([]); // Track timestamps of recent clicks
-    const zoomEnabledRef = useRef(false); // Whether zoom is enabled (2+ clicks detected)
+    // Manual Zoom Toggle - Alt+Z to toggle zoom on/off
+    const manualZoomRef = useRef(false); // Whether manual zoom is active
     
     // Zoom Events Tracking - Record zoom events during recording for editor
     const [recordedZoomEffects, setRecordedZoomEffects] = useState<Array<{
@@ -323,9 +322,8 @@ export const useRecorder = () => {
             startTimeRef.current = 0; // Reset start time for new recording timestamps
             lastMotionTimeRef.current = Date.now();
             
-            // Reset click tracking state for new recording
-            clickTimestampsRef.current = [];
-            zoomEnabledRef.current = false;
+            // Reset zoom state for new recording
+            manualZoomRef.current = false; // Start with manual zoom off
             
             // Reset typing state for clean start
             lastKeyTimeRef.current = 0;
@@ -449,8 +447,16 @@ export const useRecorder = () => {
             
             video.play();
             
-            // Keyboard Event Listener for Typing Zoom
+            // Keyboard Event Listener for Zoom Control
             const handleKeydown = (e: KeyboardEvent) => {
+                // Alt + Z = Toggle manual zoom on/off
+                if (e.altKey && (e.key === 'z' || e.key === 'Z')) {
+                    e.preventDefault();
+                    manualZoomRef.current = !manualZoomRef.current;
+                    console.log(`🔍 Manual zoom ${manualZoomRef.current ? 'ENABLED' : 'DISABLED'} (Alt+Z)`);
+                    return;
+                }
+                
                 // Ignore modifier and navigation keys that don't represent typing
                 if (isIgnoredKey(e.key)) {
                     return;
@@ -673,8 +679,16 @@ export const useRecorder = () => {
                 const timeSinceMotion = Date.now() - lastMotionTimeRef.current;
                 const timeSinceTyping = Date.now() - lastKeyTimeRef.current;
 
-                // Check if we're in typing mode (typing within last 2 seconds)
-                if (timeSinceTyping < 2000 && isTypingModeRef.current && typingTargetRef.current) {
+                // ZOOM CONTROL: Priority order
+                // 1. Manual zoom (Alt+Z toggle) - highest priority
+                // 2. Typing mode - zoom to caret
+                // 3. Scroll - zoom out
+                // 4. Idle - zoom out after 2 seconds
+                
+                if (manualZoomRef.current) {
+                    // Manual zoom is active - stay zoomed in
+                    rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
+                } else if (timeSinceTyping < 2000 && isTypingModeRef.current && typingTargetRef.current) {
                     // Typing mode - zoom in and follow the caret
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                     
@@ -690,10 +704,8 @@ export const useRecorder = () => {
                     typingTargetRef.current = null;
                 }
 
-                // Check if we're still within an active click window
-                const now = Date.now();
-                // Zoom out after 2 seconds of no motion AND not typing
-                if (timeSinceMotion > 2000 && !isTypingModeRef.current) {
+                // Zoom out after 2 seconds of no motion AND not typing AND manual zoom is off
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current && !manualZoomRef.current) {
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
