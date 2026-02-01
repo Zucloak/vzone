@@ -6,19 +6,19 @@ import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/care
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 20,              // RGB diff threshold (higher = less sensitive to subtle hover effects)
-    MIN_MASS: 5,                // Minimum changed pixels to register motion (higher to ignore hover effects)
+    THRESHOLD: 18,              // RGB diff threshold - balanced to detect clicks but not subtle hovers
+    MIN_MASS: 4,                // Minimum changed pixels to register motion
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
     SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels)
     SCROLL_WIDTH_THRESHOLD: 50,  // Width change indicating scroll (out of 64 pixels)
-    LOCALIZED_ACTION_AREA: 100,  // Max area for click/type actions (pixels²) - smaller for stricter click detection
+    LOCALIZED_ACTION_AREA: 150,  // Max area for click/type actions (pixels²)
     
-    // Zoom triggers - STRICTER to avoid false positives from hover/animations
-    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom - higher to require actual clicks
+    // Zoom triggers - balanced for real clicks
+    ZOOM_MIN_MASS: 5,           // Minimum mass to trigger zoom - balanced
     ZOOM_MAX_VELOCITY: 60,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 80,      // Velocity threshold for zoom-out
-    MOUSE_OVERRIDE_THRESHOLD: 6, // Minimum motion to override typing mode
+    MOUSE_OVERRIDE_THRESHOLD: 5, // Minimum motion to override typing mode
     
     // Click tracking (Cursorful-style multi-click trigger)
     // Auto zoom triggered when 2+ clicks within 3 second window
@@ -579,20 +579,20 @@ export const useRecorder = () => {
                         const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
-                        // STRICT click detection - must be a compact, focused change (not hover effects)
-                        // Real clicks cause sudden, localized pixel changes
-                        // Hover effects cause gradual, spread-out changes
-                        const isCompact = widthChange < 12 && heightChange < 8; // Tight bounds for real clicks
+                        // Click detection - balanced to detect real clicks but not hover effects
+                        // Real clicks cause sudden, localized pixel changes in a focused area
+                        const isCompact = widthChange < 18 && heightChange < 10; // Balanced bounds
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
                         const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
                         const isScrolling = hasVerticalScroll && hasWideArea;
                         
-                        // Click detection: STRICT - must be compact, have sufficient mass, not too spread out
-                        // Higher lower bound (ZOOM_MIN_MASS) filters out hover effects
-                        // Lower upper bound (40) filters out large animations
+                        // Click detection: balanced for real clicks
+                        // - Must have sufficient mass (ZOOM_MIN_MASS) to be a real click
+                        // - Must be compact (not spread across screen like hover effects)
+                        // - Must not be too large (filtering out animations)
                         const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                              totalMass >= MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                             totalMass < 40 && // Lower upper bound to reject animations
+                                             totalMass < 60 && // Upper bound to reject large animations
                                              isCompact && !isScrolling;
 
                         // Follow-cursor logic: When zoom is active, continuously track cursor position
