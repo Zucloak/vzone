@@ -691,9 +691,10 @@ export const useRecorder = () => {
                                 // Reset zoom enablement on scroll
                                 zoomEnabledRef.current = false;
                                 clickTimestampsRef.current = [];
-                            } else if (isClickAction && zoomEnabledRef.current) {
-                                // Click action detected - zoom in
-                                // Only triggers if NOT scrolling AND zoom is enabled by 2+ clicks
+                            } else if (zoomEnabledRef.current) {
+                                // KEEP zoomed in as long as zoom is enabled
+                                // This prevents the shaky zoom out/in when clicking between components
+                                // Zoom will only go out when window expires or scroll is detected
                                 rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_IN_LEVEL);
                             }
                         }
@@ -726,8 +727,14 @@ export const useRecorder = () => {
                     typingTargetRef.current = null;
                 }
 
-                // Zoom out after 2 seconds of no motion/clicks AND not typing
-                if (timeSinceMotion > 2000 && !isTypingModeRef.current) {
+                // Check if we're still within an active click window
+                const now = Date.now();
+                const hasActiveClickWindow = clickTimestampsRef.current.length > 0 && 
+                    (now - clickTimestampsRef.current[0] < MOTION_CONFIG.CLICK_WINDOW_MS);
+
+                // Zoom out after 2 seconds of no motion/clicks AND not typing AND no active click window
+                // This prevents zoom out when user is actively clicking within the zoom window
+                if (timeSinceMotion > 2000 && !isTypingModeRef.current && !hasActiveClickWindow && !zoomEnabledRef.current) {
                     rigRef.current.set_target_zoom(MOTION_CONFIG.ZOOM_OUT_LEVEL);
                 }
 
