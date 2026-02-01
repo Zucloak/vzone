@@ -306,6 +306,14 @@ export const ZoomEditor: React.FC<ZoomEditorProps> = ({
                 <p>• Drag edges to resize duration</p>
                 <p>• Click timeline to seek video</p>
             </div>
+            
+            {/* Limitation note */}
+            <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-[10px] text-amber-700">
+                    <strong>Note:</strong> This timeline shows zoom events from your recording. 
+                    Edits here are for review purposes. Re-record to apply different zoom timing.
+                </p>
+            </div>
         </div>
     );
 };

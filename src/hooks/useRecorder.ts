@@ -729,8 +729,16 @@ export const useRecorder = () => {
 
                 // Check if we're still within an active click window
                 const now = Date.now();
+                const firstClickTime = clickTimestampsRef.current.length > 0 ? clickTimestampsRef.current[0] : 0;
                 const hasActiveClickWindow = clickTimestampsRef.current.length > 0 && 
-                    (now - clickTimestampsRef.current[0] < MOTION_CONFIG.CLICK_WINDOW_MS);
+                    (now - firstClickTime < MOTION_CONFIG.CLICK_WINDOW_MS);
+                
+                // If window expired, reset zoom state
+                // This ensures zoom out happens when user stops clicking for 3 seconds
+                if (!hasActiveClickWindow && clickTimestampsRef.current.length > 0) {
+                    clickTimestampsRef.current = [];
+                    zoomEnabledRef.current = false;
+                }
 
                 // Zoom out after 2 seconds of no motion/clicks AND not typing AND no active click window
                 // This prevents zoom out when user is actively clicking within the zoom window
