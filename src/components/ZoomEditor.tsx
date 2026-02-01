@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Move, ZoomIn, ZoomOut, Clock } from 'lucide-react';
+import { Plus, Trash2, ZoomIn, ZoomOut, Clock } from 'lucide-react';
 import type { ZoomEffect } from '../types';
 
 interface ZoomEditorProps {
-    videoRef: React.RefObject<HTMLVideoElement>;
+    videoRef: React.RefObject<HTMLVideoElement | null>;
     videoDuration: number; // in seconds
     onZoomEffectsChange?: (effects: ZoomEffect[]) => void;
 }
