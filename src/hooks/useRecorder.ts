@@ -6,34 +6,32 @@ import { getCaretCoordinates, isTypingActive, isIgnoredKey } from '../utils/care
 // Motion detection configuration (tuned for 64x36 analysis buffer)
 const MOTION_CONFIG = {
     // Pixel change detection
-    THRESHOLD: 12,              // RGB diff threshold (lower = more sensitive to clicks)
-    MIN_MASS: 2,                // Minimum changed pixels to register motion (lower for better click detection)
+    THRESHOLD: 20,              // RGB diff threshold (higher = less sensitive to subtle hover effects)
+    MIN_MASS: 5,                // Minimum changed pixels to register motion (higher to ignore hover effects)
     
     // Scroll detection (dimensions in analysis buffer coordinate space)
-    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels) - higher = stricter scroll detection
-    SCROLL_WIDTH_THRESHOLD: 50,  // Width change indicating scroll (out of 64 pixels) - higher = stricter
-    LOCALIZED_ACTION_AREA: 200,  // Max area for click/type actions (pixels²) - larger for better click detection
+    SCROLL_HEIGHT_THRESHOLD: 8,  // Height change indicating scroll (out of 36 pixels)
+    SCROLL_WIDTH_THRESHOLD: 50,  // Width change indicating scroll (out of 64 pixels)
+    LOCALIZED_ACTION_AREA: 100,  // Max area for click/type actions (pixels²) - smaller for stricter click detection
     
-    // Zoom triggers
-    ZOOM_MIN_MASS: 2,           // Minimum mass to trigger zoom - very low for better click detection
-    ZOOM_MAX_VELOCITY: 60,      // Max velocity for zoom-in (pixels/frame) - lower for stability
+    // Zoom triggers - STRICTER to avoid false positives from hover/animations
+    ZOOM_MIN_MASS: 8,           // Minimum mass to trigger zoom - higher to require actual clicks
+    ZOOM_MAX_VELOCITY: 60,      // Max velocity for zoom-in (pixels/frame)
     ZOOM_OUT_VELOCITY: 80,      // Velocity threshold for zoom-out
-    MOUSE_OVERRIDE_THRESHOLD: 4, // Minimum motion to override typing mode (increased)
+    MOUSE_OVERRIDE_THRESHOLD: 6, // Minimum motion to override typing mode
     
     // Click tracking (Cursorful-style multi-click trigger)
     // Auto zoom triggered when 2+ clicks within 3 second window
-    // Follow-cursor zoom maintained as long as clicks keep happening
-    // Two-click requirement prevents motion-sickness-inducing frequent zooms
+    // Two-click requirement prevents zoom from hover effects
     CLICK_WINDOW_MS: 3000,      // Time window for click tracking (3 seconds)
     MIN_CLICKS_TO_ZOOM: 2,      // Minimum clicks required to trigger zoom (2 clicks = intentional)
     
     // Smoothing - Higher values = more responsive, lower = slower/cinematic
-    // When zoomed in, we need responsive cursor following
-    TARGET_SMOOTHING: 0.4,      // Lerp factor for cursor following when zoomed (0.4 = responsive)
-    TARGET_SMOOTHING_CLICK: 0.6, // Smoothing on clicks (0.6 = snappy positioning on clicked component)
+    TARGET_SMOOTHING: 0.4,      // Lerp factor for cursor following when zoomed
+    TARGET_SMOOTHING_CLICK: 0.6, // Smoothing on clicks
     
     // Zoom levels
-    ZOOM_IN_LEVEL: 1.6,         // Zoom level for focused actions (1.6x = less aggressive)
+    ZOOM_IN_LEVEL: 1.6,         // Zoom level for focused actions (1.6x)
     ZOOM_OUT_LEVEL: 1.0,        // Zoom level for overview (scrolling, idle)
 } as const;
 
@@ -581,16 +579,20 @@ export const useRecorder = () => {
                         const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
-                        // Relaxed click detection for better trigger sensitivity
-                        const isCompact = widthChange < 25 && heightChange < 15; // More generous bounds
+                        // STRICT click detection - must be a compact, focused change (not hover effects)
+                        // Real clicks cause sudden, localized pixel changes
+                        // Hover effects cause gradual, spread-out changes
+                        const isCompact = widthChange < 12 && heightChange < 8; // Tight bounds for real clicks
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
                         const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
                         const isScrolling = hasVerticalScroll && hasWideArea;
                         
-                        // Click detection: compact motion pattern that isn't scrolling
+                        // Click detection: STRICT - must be compact, have sufficient mass, not too spread out
+                        // Higher lower bound (ZOOM_MIN_MASS) filters out hover effects
+                        // Lower upper bound (40) filters out large animations
                         const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
                                              totalMass >= MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                             totalMass < 80 && // Higher upper bound to catch more clicks
+                                             totalMass < 40 && // Lower upper bound to reject animations
                                              isCompact && !isScrolling;
 
                         // Follow-cursor logic: When zoom is active, continuously track cursor position
