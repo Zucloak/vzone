@@ -601,20 +601,14 @@ export const useRecorder = () => {
                                              totalMass < 60 && // Upper bound to reject large animations
                                              isCompact && !isScrolling;
 
-                        // Follow-cursor logic: When zoom is active, continuously track cursor position
+                        // Follow-cursor logic: When manual zoom is active, continuously track cursor position
                         // Responsive tracking when zoomed in, smoother when zoomed out
-                        if (zoomEnabledRef.current && rigRef.current.get_view_rect) {
+                        if (manualZoomRef.current && rigRef.current.get_view_rect) {
                             const view = rigRef.current.get_view_rect();
                             const currentZoom = view.zoom || 1.0;
                             
-                            // Click action: Snap quickly to clicked component
-                            if (isClickAction) {
-                                const clickSmoothing = MOTION_CONFIG.TARGET_SMOOTHING_CLICK;
-                                currentTargetRef.current.x = currentTargetRef.current.x + 
-                                    (detectedX - currentTargetRef.current.x) * clickSmoothing;
-                                currentTargetRef.current.y = currentTargetRef.current.y + 
-                                    (detectedY - currentTargetRef.current.y) * clickSmoothing;
-                            } else if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
+                            // When zoomed in, follow detected motion
+                            if (currentZoom > MOTION_CONFIG.ZOOM_OUT_LEVEL + 0.1) {
                                 // Zoomed in: Follow cursor responsively
                                 const smoothing = MOTION_CONFIG.TARGET_SMOOTHING;
                                 currentTargetRef.current.x = currentTargetRef.current.x + 
@@ -623,18 +617,6 @@ export const useRecorder = () => {
                                     (detectedY - currentTargetRef.current.y) * smoothing;
                             }
                             // When zoomed out, don't update target (camera stays centered)
-                        } else {
-                            // When zoom is not active yet - prepare for potential zoom
-                            if (isClickAction) {
-                                // Pre-position on clicks before zoom activates
-                                // Slightly slower than active zoom (80%) for smoother transition when zoom kicks in
-                                const clickSmoothing = MOTION_CONFIG.TARGET_SMOOTHING_CLICK * 0.8;
-                                currentTargetRef.current.x = currentTargetRef.current.x + 
-                                    (detectedX - currentTargetRef.current.x) * clickSmoothing;
-                                currentTargetRef.current.y = currentTargetRef.current.y + 
-                                    (detectedY - currentTargetRef.current.y) * clickSmoothing;
-                            }
-                            // Don't track cursor movement when zoom is not active
                         }
 
                         // Update history
