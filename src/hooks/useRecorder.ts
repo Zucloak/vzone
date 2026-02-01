@@ -585,21 +585,10 @@ export const useRecorder = () => {
                         const widthChange = maxX - minX;
                         const heightChange = maxY - minY;
                         const changeArea = widthChange * heightChange;
-                        // Click detection - balanced to detect real clicks but not hover effects
-                        // Real clicks cause sudden, localized pixel changes in a focused area
-                        const isCompact = widthChange < 18 && heightChange < 10; // Balanced bounds
+                        // Scroll detection
                         const hasVerticalScroll = heightChange > MOTION_CONFIG.SCROLL_HEIGHT_THRESHOLD;
                         const hasWideArea = changeArea > MOTION_CONFIG.LOCALIZED_ACTION_AREA;
                         const isScrolling = hasVerticalScroll && hasWideArea;
-                        
-                        // Click detection: balanced for real clicks
-                        // - Must have sufficient mass (ZOOM_MIN_MASS) to be a real click
-                        // - Must be compact (not spread across screen like hover effects)
-                        // - Must not be too large (filtering out animations)
-                        const isClickAction = changeArea < MOTION_CONFIG.LOCALIZED_ACTION_AREA && 
-                                             totalMass >= MOTION_CONFIG.ZOOM_MIN_MASS &&
-                                             totalMass < 60 && // Upper bound to reject large animations
-                                             isCompact && !isScrolling;
 
                         // Follow-cursor logic: When manual zoom is active, continuously track cursor position
                         // Responsive tracking when zoomed in, smoother when zoomed out
